@@ -1,0 +1,161 @@
+gotto-hando --help-windows - Windows: interactive session, Task Scheduler,
+SmartScreen, UAC/UIPI, DPI, cmd /C and code pages.
+
+== WHEN YOU NEED THIS ==
+  `gotto-hando local qinfo` shows session=locked|inactive; a run exited 4
+  with E_SESSION; input is accepted (ok) but an elevated app does not
+  react; you are about to run `gotto-hando --serve` on a Windows PC; exec
+  output looks like mojibake.
+
+== CHECK ==
+  $ gotto-hando local qinfo
+  os=windows osver=10.0.22631 arch=amd64 ver=0.1.0 primary=ctrl
+  desktop=0,0 2560x1440 displays=1 session=active perms=n/a elevated=0
+  (one line in reality; wrapped here)
+  session=active    this process is in the active console session and the
+                    input desktop is "Default": input and capture work.
+  session=locked    the input desktop is Winlogon: lock screen, UAC secure
+                    desktop, Ctrl+Alt+Del screen. Unlock / dismiss.
+  session=inactive  not the active console session: a service (session 0),
+                    a disconnected RDP session, another user's session.
+  perms=n/a         Windows has no permission dialogs for input/capture.
+                    Nothing to grant. `--request-perms` is exit 2 locally
+                    and a no-op (exit 0) against a Windows server.
+  elevated=0|1      whether gotto-hando runs as Administrator (matters for
+                    UIPI, below).
+  Preflight also rejects a run while a modifier key or mouse button is
+  physically held down (GetAsyncKeyState): release it and retry.
+
+== INTERACTIVE SESSION REQUIRED ==
+  SendInput and screen capture only work from a process inside the
+  logged-on user's interactive desktop.
+    - NOT a Windows service / session 0 (always E_SESSION). Do not wrap
+      --serve in a service (sc.exe, NSSM, srvany).
+    - NOT a locked desktop: the lock screen, a screen saver with password,
+      or a UAC prompt switch the input desktop to Winlogon
+      (session=locked). Disable automatic lock while driving: Settings >
+      Accounts > Sign-in options > "Require sign-in: Never", and Power &
+      sleep / screen timeout: Never. Autologon (netplwiz / Sysinternals
+      Autologon) restores the session after a reboot.
+    - RDP: while you are connected over RDP the RDP session is the active
+      one; DISCONNECTING locks it (session=inactive/locked). To hand the
+      desktop back to the physical console without locking it, run from
+      inside the RDP session (elevated):
+        tscon %SESSIONNAME% /dest:console
+      Then keep the console unlocked (settings above). A headless PC
+      without a monitor may need a dummy HDMI/DP plug so that a display
+      exists to capture (otherwise cap fails with E_CAPTURE).
+    - SSH (OpenSSH Server) shells are session-0-like: `gotto-hando --serve`
+      started from an SSH shell reports session=inactive. Use Task
+      Scheduler (below) so the server lives in the interactive session;
+      use SSH only for the tunnel.
+
+== KEEPING --serve RUNNING (TASK SCHEDULER) ==
+  Run the server as a normal process of the logged-on user, started at
+  logon:
+    GUI: Task Scheduler > Create Task
+      General:    "Run only when user is logged on"  (REQUIRED - "whether
+                  user is logged on or not" has no interactive desktop)
+                  "Run with highest privileges" only if you need to drive
+                  elevated apps (UIPI, below)
+      Triggers:   At log on - specific user
+      Actions:    Start a program: C:\tools\gotto-hando.exe
+                  Arguments: --serve 47311 --token s3cr3t --detach
+      Conditions: uncheck "Start the task only if the computer is on AC
+                  power"
+      Settings:   uncheck "Stop the task if it runs longer than";
+                  "If the task is already running: Do not start a new
+                  instance"
+    Command line equivalent (interactive-only task for the current user):
+      schtasks /Create /TN gotto-hando /SC ONLOGON /RL LIMITED /F ^
+        /TR "\"C:\tools\gotto-hando.exe\" --serve 47311 --token s3cr3t --detach"
+      schtasks /Run /TN gotto-hando      # start now without logging off
+      (use /RL HIGHEST from an elevated prompt for an elevated server)
+  --detach frees the console (FreeConsole) and writes the log to
+  %LOCALAPPDATA%\gotto-hando\serve.log, so no window stays open. It is the
+  same binary; there is no separate windowsgui build.
+  A startup-folder shortcut (shell:startup) also works but cannot be
+  elevated without a UAC prompt at every logon.
+
+== SMARTSCREEN AND DEFENDER ==
+  A binary downloaded with a browser carries the Mark-of-the-Web; on first
+  start SmartScreen shows "Windows protected your PC". A person must click
+  "More info" > "Run anyway" (cannot be automated), or remove the mark
+  beforehand:
+    powershell -NoProfile -Command "Unblock-File C:\tools\gotto-hando.exe"
+  A binary built locally with `go build` has no mark. Defender occasionally
+  flags unsigned Go binaries as a false positive (Trojan:Win32/Wacatac
+  etc.): add the folder to Windows Security > Virus & threat protection >
+  Exclusions, or use a locally built binary. There is no code-signing
+  requirement for input/capture.
+
+== UAC AND ELEVATED APPS (UIPI) ==
+  While a UAC elevation prompt is showing, Windows switches to the secure
+  desktop: session=locked, nothing can be driven and captures fail.
+  gotto-hando cannot click "Yes" for you; a person dismisses it (or the
+  app is started elevated beforehand).
+  Apps running as Administrator ignore SendInput from a non-elevated
+  process (UIPI). The OS reports success, so gotto-hando prints `ok` and
+  the app does nothing; this cannot be detected. Check `qinfo` elevated=;
+  to drive elevated apps run the server elevated (Task Scheduler "Run with
+  highest privileges" / `schtasks /RL HIGHEST`). An elevated server can
+  drive both kinds.
+
+== DPI AND COORDINATES ==
+  Coordinates are physical pixels. gotto-hando declares Per-Monitor-V2 DPI
+  awareness (manifest + SetProcessDpiAwarenessContext), so it sees real
+  pixels on every monitor regardless of the scaling percentage, and a
+  default `cap` (scale=1) is pixel-exact: a position found in the PNG is
+  the coordinate to click. `qdisp` lists each monitor's origin, size and
+  scale (1.25 = 125%).
+  Virtual-desktop origin is the top-left of the PRIMARY monitor; monitors
+  to the left/above have negative coordinates.
+  `qwin` lists top-level windows that are visible, not cloaked (DWM), have
+  a non-empty title and are not tool windows. Frames are the DWM extended
+  frame bounds, i.e. they exclude the invisible drop-shadow border.
+  An app that is NOT DPI-aware is bitmap-stretched by Windows; its own
+  notion of coordinates differs, but what you see in `cap` is what
+  SendInput hits, so always take coordinates from a capture.
+  Window captures use PrintWindow, which works even when the window is
+  covered; some GPU-rendered apps come out black - use a desktop or rect
+  capture then.
+
+== exec ON WINDOWS ==
+  exec[]prog args...   direct: the payload is split on spaces ("..."
+                       quoting only) and run as a process.
+  exec[shell]...       `cmd /C <payload>`: pipes, redirection, built-ins
+                       (dir, copy, set), wildcards via the command. It is
+                       always cmd; for PowerShell call it explicitly:
+                         exec[]powershell -NoProfile -Command Get-Process
+  Output encoding: cmd and many console programs write the OEM code page
+  (CP437, CP949, ...). gotto-hando decodes stdout/stderr with the console
+  output code page (GetConsoleOutputCP; the ANSI code page GetACP when the
+  server has no console, e.g. --detach) and delivers UTF-8. Undecodable
+  bytes become U+FFFD. gotto-hando never forces chcp 65001 itself. If a
+  program prints UTF-8 while the console is CP949, switch the code page in
+  the same command:
+    exec[shell]chcp 65001 >nul && type file.txt
+  PATH: a Task Scheduler-started server has the user's normal PATH (unlike
+  macOS launchd). Absolute paths are still safest.
+  Paths with spaces:
+    exec[]"C:\Program Files\Blender\blender.exe" --version
+  (no backslash escaping in exec; "..." only groups words).
+
+== CAVEATS ==
+  CAVEAT: SetForegroundWindow may only flash the taskbar button. `win`
+          retries with input-thread attachment and a synthetic Alt tap and
+          reports E_NOWINDOW if the window still did not come to the
+          front. Retry once; then click it (c[]x,y).
+  CAVEAT: Unicode text injection (txt) is ignored by scan-code apps
+          (Blender, games, Win32 consoles). Use k per key or paste.
+  CAVEAT: Keypad keys are sent by scan code (physical position) regardless
+          of NumLock; use numpad0-9 / numenter deliberately. Arrow, Home/
+          End, Insert/Delete, Page keys, Win and right Ctrl/Alt are sent as
+          extended keys; every key carries its scan code so DirectInput
+          apps see it.
+  CAVEAT: Win32 console windows do not accept Ctrl+V paste by default: use
+          clip[] + k[s]insert or right-click, or exec instead.
+  CAVEAT: Store/UWP apps and some games running in exclusive fullscreen
+          may not honour synthetic input; verify with cap.
+  CAVEAT: txt sends UTF-16 units (surrogate pairs in order); a per-
+          character ms= gap applies per Unicode character.

@@ -1,0 +1,216 @@
+gotto-hando --help-macos - macOS: signing, permissions (TCC), sessions,
+displays.
+
+== WHEN YOU NEED THIS ==
+  `gotto-hando local qinfo` shows perms=accessibility:missing or
+  screen:missing, or session=locked|inactive; a run exited 4 with
+  E_PERMISSION / E_SESSION; you rebuilt the binary and input stopped
+  working; you are about to run `gotto-hando --serve` on a Mac (especially
+  one you reach only over SSH).
+
+== CHECK ==
+  $ gotto-hando local qinfo
+  os=darwin osver=14.5 arch=arm64 ver=0.1.0 primary=cmd desktop=0,0 2560x1440
+  displays=2 session=active perms=accessibility:ok,screen:ok
+  (one line in reality; wrapped here)
+  perms=accessibility:*  gates ALL input (k txt m c drag scroll ...) and
+                         window control (win). Read with AXIsProcessTrusted().
+  perms=screen:*         gates cap and window titles in qwin (without it
+                         titles come back empty). Read with
+                         CGPreflightScreenCaptureAccess().
+  session=active         GUI session, unlocked. locked = lock screen /
+                         screen saver. inactive = not a GUI session (SSH).
+  qinfo never prompts. Preflight fails with exit 4 when anything above is
+  not ok/active.
+
+== LOCAL BUILD AND RUN ==
+  `go build` / `go install` / `git clone` + build: the Go linker ad-hoc
+  signs the binary; that is all a local binary needs. Such binaries carry
+  no quarantine attribute and start normally.
+  A binary DOWNLOADED with a browser is quarantined and blocked ("cannot be
+  opened", "not verified"). Remove the attribute:
+    xattr -d com.apple.quarantine ./gotto-hando
+  Notarization is NOT needed for this tool (it requires a paid Apple
+  Developer Program membership). Do not chase it.
+
+== WHO OWNS THE PERMISSION (RESPONSIBLE PROCESS) ==
+  TCC attributes a permission to the "responsible" app of the process.
+  When gotto-hando runs from a terminal application (Terminal, iTerm2, the
+  VS Code integrated terminal, ...) that app is responsible: the toggle
+  you see in System Settings is for Terminal/iTerm2/Code, not for
+  gotto-hando. Consequences:
+    - Local use (`gotto-hando local ...` typed into a terminal): grant the
+      permission ONCE to the terminal app. Rebuilding gotto-hando does not
+      affect it. Nothing else to do.
+    - `--serve` started by launchd (LaunchAgent) or from an SSH shell: the
+      binary itself is responsible, so the permission is bound to the
+      binary's code-signing identity (next section) and must be granted on
+      that Mac by hand (REMOTE MAC below).
+  An agent running INSIDE a terminal-hosted tool inherits that terminal's
+  grant.
+
+== STABLE SIGNING IDENTITY (SURVIVING REBUILDS) ==
+  TCC binds a grant to the code-signing identity. An ad-hoc signature has
+  no identity - its designated requirement is the hash of that exact build
+  - so every rebuild is a new "app" and the grant is lost (even with a
+  fixed --identifier).
+  Fix: sign with a self-signed code-signing certificate, which gives the
+  binary a stable identity across rebuilds.
+    1. Keychain Access > Certificate Assistant > Create a Certificate...
+       Name: gotto-hando-dev   Identity Type: Self Signed Root
+       Certificate Type: Code Signing   -> Create.
+    2. After every build:
+       codesign -s "gotto-hando-dev" --force ./gotto-hando
+       codesign -dv ./gotto-hando     # shows Authority=gotto-hando-dev
+    3. Put step 2 in your Makefile / build script (the repo's scripts/
+       does this). Grant the permission once per Mac for this identity;
+       later rebuilds keep it.
+  This matters only where the binary itself is the responsible process
+  (--serve via launchd / SSH). For terminal use the terminal app's grant
+  covers you and this step is optional.
+  A binary re-signed with a different certificate (or ad-hoc again) is a
+  new identity: grant again.
+
+== GRANTING PERMISSIONS: PROCEDURE ==
+  Do this in order; stop as soon as qinfo shows ok. Only a human can flip
+  the toggles - steps 3-4 cannot be automated.
+    1. gotto-hando local qinfo          # which of accessibility / screen
+                                        # is missing?
+    2. gotto-hando local --request-perms
+       Asks macOS to show the permission prompts. (Remote Mac:
+       `gotto-hando <profile> --request-perms` - the SERVER shows them in
+       its own GUI session; see REMOTE MAC.)
+       - Calls AXIsProcessTrustedWithOptions(prompt=true) and
+         CGRequestScreenCaptureAccess(). Prints the same perms= line as
+         qinfo and exits 0 when both are ok, 4 otherwise.
+       - The prompt ADDS the responsible app to the list in System
+         Settings but does not turn it on; a person must toggle it.
+       - Must run inside the GUI session (a terminal window, or the
+         LaunchAgent). From an SSH shell there is NO prompt: it just
+         prints missing. Then go to step 3 on the machine itself.
+       - Screen Recording takes effect only after the process is
+         RESTARTED (quit the terminal tab or restart --serve).
+       - On Windows: `local --request-perms` is exit 2; against a Windows
+         server it is a no-op (perms=n/a, exit 0).
+    3. Tell the user exactly this:
+         System Settings > Privacy & Security > Accessibility
+           -> enable <Terminal app | gotto-hando>
+         System Settings > Privacy & Security > Screen Recording
+           -> enable <Terminal app | gotto-hando>
+       If the entry is absent, press "+" and choose the binary (for
+       --serve) or the terminal app. Then restart gotto-hando.
+       (macOS 15+ may re-confirm Screen Recording periodically; same
+       toggle.)
+    4. Re-run step 1. If accessibility is still missing after toggling,
+       the identity changed (rebuild without a stable signature): remove
+       the stale entry with "-" and add the binary again, or
+       `tccutil reset Accessibility` and redo.
+  `tccutil reset Accessibility|ScreenCapture [<bundle-id>]` only CLEARS
+  grants; it cannot grant.
+  MDM (PPPC profile) can pre-approve Accessibility but cannot pre-approve
+  Screen Recording - that one is always a manual toggle.
+
+== REMOTE MAC (RUNNING --serve) ==
+  SSH login shells are not part of the Aqua (GUI) session: events posted
+  from them are dropped, captures are blank, and permission prompts never
+  appear (session=inactive). Start the server INSIDE the GUI session:
+    - Interactive: from a Terminal window on that Mac (or via Screen
+      Sharing), or
+    - Unattended: a LaunchAgent (runs in the user's GUI session, restarts
+      on login):
+        ~/Library/LaunchAgents/io.gotto-hando.serve.plist
+        (chmod 600 - it holds the token)
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+          <key>Label</key><string>io.gotto-hando.serve</string>
+          <key>ProgramArguments</key><array>
+            <string>/usr/local/bin/gotto-hando</string>
+            <string>--serve</string><string>47311</string>
+            <string>--token</string><string>s3cr3t</string></array>
+          <key>RunAtLoad</key><true/>
+          <key>KeepAlive</key><true/>
+          <key>LimitLoadToSessionType</key><string>Aqua</string>
+          <key>StandardOutPath</key><string>/tmp/gotto-hando.log</string>
+          <key>StandardErrorPath</key><string>/tmp/gotto-hando.log</string>
+        </dict></plist>
+        launchctl bootstrap gui/$(id -u) \
+          ~/Library/LaunchAgents/io.gotto-hando.serve.plist
+        launchctl kickstart -k gui/$(id -u)/io.gotto-hando.serve
+          # restart after a permission change or rebuild
+  Permissions for a launchd-started server belong to the BINARY (stable
+  identity required, see above) and must be granted once per Mac per
+  identity, by a person at the machine or over Screen Sharing: System
+  Settings > Privacy & Security > Accessibility and Screen Recording > "+"
+  > select the binary. Then restart the agent (kickstart). Verify over the
+  tunnel:
+    gotto-hando <profile> qinfo
+      -> session=active perms=accessibility:ok,screen:ok
+  Shortcut over the tunnel - pop the prompts on the remote Mac without
+  Screen Sharing:
+    gotto-hando <profile> --request-perms
+  The client calls the server's POST /v1/request-perms and the --serve
+  process itself calls AXIsProcessTrustedWithOptions /
+  CGRequestScreenCaptureAccess, so the system prompts appear in the GUI
+  session the SERVER lives in. This only works when the server runs inside
+  the Aqua session (the LaunchAgent above); a server started from an SSH
+  shell shows nothing and just returns missing. The prompt adds the binary
+  to the lists but a person at that Mac still has to flip the toggles, and
+  Screen Recording is picked up only after the server restarts
+  (launchctl kickstart -k ...). Then verify with qinfo. Against a Windows
+  server the command is a no-op (perms=n/a, exit 0).
+  Keep the Mac awake and unlocked while it is being driven:
+  `caffeinate -d -i` in another LaunchAgent, or System Settings > Lock
+  Screen > never require password / never turn display off. A locked or
+  sleeping Mac reports session=locked (exit 4).
+  PATH: launchd starts the server with a reduced PATH. exec[]cmd may then
+  fail with E_EXEC "not found"; use exec[shell] (the login shell's rc
+  files restore PATH) or an absolute path.
+  Tunnel, profile and --token: see --help-remote.
+
+== SESSION, LOCK, SECURE INPUT ==
+  session=locked    lock screen or screen saver is up. Input and capture
+                    fail in preflight (exit 4). Unlock; prevent with
+                    caffeinate.
+  session=inactive  the process is not in the GUI session (SSH). Start it
+                    from Terminal / LaunchAgent (above).
+  Secure Input      while a password field (or an app that enables Secure
+                    Event Input) is focused, synthetic key events are
+                    blocked. The failing line reports E_INPUT with a hint.
+                    Click elsewhere / close the dialog and retry.
+  Fast user switching: only the session that owns the console can be
+  driven.
+
+== DISPLAYS AND COORDINATES ==
+  Coordinates are in points (logical). On Retina displays one point = 2
+  pixels (scale=2 in `qdisp`); a default `cap` is downscaled so image
+  pixels == points, and you can feed pixel positions from the PNG straight
+  back as coordinates.
+  cap[scale=native] keeps full pixels - divide by the display's scale
+  before using them as input coordinates.
+  Multi-display: origin (0,0) is the top-left of the primary display;
+  displays to the left/above have negative coordinates. Displays can have
+  different scales; `qdisp` lists idx, origin, size and scale, and
+  m[disp=N] / cap[disp=N] address one display.
+  `qwin` frames include the title bar; c[w]x,y is relative to the window's
+  top-left INCLUDING the title bar. qwin lists on-screen windows of layer 0
+  only (no menu bar, dock or desktop elements).
+
+== CAVEATS ==
+  CAVEAT: Rebuilt and input stopped? qinfo -> perms missing -> the identity
+          changed. Use the self-signed certificate step or, for terminal
+          use, nothing at all (the terminal app owns the grant).
+  CAVEAT: `open[]Name` uses `open -a Name` (bundle name, case-insensitive);
+          a path uses `open <path>`. A wrong name is E_EXEC.
+  CAVEAT: exec[shell] runs `$SHELL -lc` (zsh by default): your ~/.zprofile
+          / ~/.zshrc PATH applies, even under launchd.
+  CAVEAT: k[]a etc. are physical US-layout keys; with a non-US or IME input
+          source use txt for text. txt uses Unicode key events and bypasses
+          the IME in most apps.
+  CAVEAT: Some apps only honour modifier flags carried on the event, not
+          separate modifier key-downs; gotto-hando sets both. If a chord is
+          ignored, try the k[]ctrl+shift+a form vs k[cs]a and verify with
+          cap.
+  CAVEAT: Double clicks are sent with the click-state field set (c[n=2]);
+          two separate `c` lines are NOT a double click.

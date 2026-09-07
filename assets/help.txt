@@ -1,0 +1,708 @@
+gotto-hando 0.1.0 - drive a macOS/Windows desktop from the shell, one command
+per line.
+
+This text is the complete, normative manual for USING the tool. Platform
+setup (permissions, sessions, signing, DPI) and remote setup (server, tunnel,
+profiles) are separate texts: see SEE ALSO at the end. Every section header
+has the fixed form "== NAME ==" so you can grep for it.
+
+== SYNOPSIS ==
+  gotto-hando <profile> [options] [line ...]
+  gotto-hando <profile> [options] -f <file|->
+  gotto-hando <profile>
+  gotto-hando --serve <port> [--token <t>] [--detach]
+  gotto-hando local|<profile> --request-perms
+  gotto-hando --help | --help-macos | --help-windows | --help-remote
+  gotto-hando --profiles | --version
+
+  <profile>    `local` = this machine (in-process). Anything else = an entry
+               in profiles.toml (see PROFILES, --help-remote). Unknown
+               profile = exit 3.
+  [line ...]   one command per argument. A newline inside one argument
+               splits it into several lines ($'a\nb' passes two lines).
+  -f FILE      read lines from FILE, or from stdin when FILE is `-`. -f and
+               [line ...] cannot be mixed (exit 2), so that result line
+               numbers always refer to one source.
+  (no lines)   stdin is a pipe: read lines from it. stdin is a TTY: run
+               `qinfo`. When any [line ...] is given stdin is never read.
+  --serve      run the server on 127.0.0.1:<port> (see --help-remote).
+               --detach is Windows only: detach the console (--help-windows).
+  --request-perms
+               macOS only: trigger the Accessibility / Screen Recording
+               prompts in the GUI session of `local` or of the <profile>'s
+               server. Details under OPTIONS and in --help-macos.
+  --help*      print one help text and exit 0. Standalone: no <profile>;
+               other options or lines given together with it are ignored.
+               There is no `--help <topic>`; grep for "== NAME ==" instead.
+
+  Options start with `-`; command lines start with a lowercase letter, `#`
+  or whitespace, so options and lines may be given in any order.
+
+== OPTIONS ==
+  -f, --file PATH    sequence file (`-` = stdin). Not combinable with
+                     [line ...] (exit 2).
+  -k, --keep-going   do not stop at the first failed line (ERROR POLICY).
+  --delay DUR        initial global delay (default 100ms). Overrides the
+                     profile's `delay`.
+  --out DIR          capture directory (see "Capture paths" under OUTPUT).
+  --jsonl            JSON Lines output instead of the plain format (JSONL).
+  --check            parse and validate only; no connection, no preflight;
+                     exit 0 or 2.
+  --ir               print the IR as JSON and exit; no connection.
+  --cap-on-error     after a failed line, release held keys and take one
+                     extra capture.
+  --timeout DUR      whole-run deadline (default 300s). Sent to the server
+                     as deadline_ms and enforced by BOTH sides. Expiry is
+                     err E_TIMEOUT on the running line and exit 1, never
+                     exit 5.
+  --ping             connect and check permissions/session only (= qinfo).
+  -q, --quiet        omit `ok` lines. err/warn lines, query results and
+                     capture lines are still printed.
+  --profiles         print the profiles.toml path and its entries; exit 0.
+  --version          print the version; exit 0.
+  --request-perms    macOS only; used as `local --request-perms` or
+                     `<profile> --request-perms`.
+                     local: this process calls
+                     AXIsProcessTrustedWithOptions(prompt=true) and
+                     CGRequestScreenCaptureAccess() so macOS shows its
+                     prompts, then prints one line
+                     `perms=accessibility:ok|missing,screen:ok|missing`.
+                     <profile>: calls the server's POST /v1/request-perms;
+                     the --serve process does the same inside ITS GUI
+                     session and returns the same line.
+                     Exit 0 when both are ok, else 4. Prompts appear only
+                     from inside a GUI session (a terminal window, a
+                     LaunchAgent); from an SSH shell it prints `missing`
+                     without any prompt. A person must still flip the
+                     toggles, and Screen Recording takes effect only after
+                     the process (server) restarts.
+                     Windows local: exit 2. Windows server: no-op,
+                     `perms=n/a`, exit 0.
+
+== QUICK START ==
+  $ gotto-hando local 'win[]Safari' 'k[m]l' 'txt[]example.com\n' \
+                      'sleep[]1s' 'cap'
+  out /tmp/gh/
+  1 ok win id=771 app=Safari matched=1 0,25 1440x875 "Start Page"
+  2 ok k
+  3 ok txt chars=12
+  4 ok sleep
+  5 ok cap /tmp/gh/0000-cap-20260907T131501.502Z.png 1440x900 origin=0,0 scale=1
+  done ok=5 err=0 skip=0 elapsed=1610ms held_released=0
+
+  Read the PNG, pick coordinates from it (image pixels == input coordinates
+  at scale=1), then act:
+  $ gotto-hando local 'c[]312,140' 'txt[ms=20]hello' 'k[]enter' 'cap'
+  If the first run exits 4 (E_PERMISSION / E_SESSION), run
+  `gotto-hando local qinfo` and read --help-macos or --help-windows.
+
+== SYNTAX ==
+  Input is UTF-8 text. Each line, ended by "\n" or "\r\n", is one command.
+  Leading spaces/tabs are allowed. Empty or whitespace-only lines are
+  ignored. A line whose first non-blank character is `#` is a comment.
+  Every line is parsed and validated before anything runs; a syntax or
+  validation error anywhere runs nothing (exit 2).
+
+  Exactly two line shapes exist:
+    <command>[<modifiers>]<payload>   payload = everything after the FIRST
+                                      `]` up to end of line. `[]` means
+                                      "no modifiers".
+    <command>                         no payload (trailing whitespace ok).
+
+  The character right after <command> decides the shape:
+    `[`             bracket form; payload starts right after the first `]`
+    end of line     no payload
+    anything else   syntax error (E_SYNTAX, exit 2)
+  There is NO space-separated form: `m 1024,133`, `k enter` and `m1024,133`
+  are errors; write `m[]1024,133`, `k[]enter`. (One rule instead of two,
+  no "exactly one separator" caveat, and the payload always starts at a
+  known position. Cost: two characters per line.)
+
+  <command>    lowercase letters/digits, starting with a letter
+               (k, txt, m, c, cap, win, qwin, exec, ...).
+  <modifiers>  comma-separated tokens. A token containing `=` is a
+               key=value pair; any other token is a group of single-letter
+               flags ([ms] = flags m and s; [ms=20] = key ms; [cs] = [c,s]).
+               Values cannot contain `,` or `]` and have no quoting or
+               escapes. A list inside a value is `:`-separated; rect= is
+               the only list-valued key (rect=0:0:600:400). Long values
+               such as paths go in the payload instead. Unknown and
+               repeated flags/keys are syntax errors (typos never pass
+               silently).
+  <payload>    raw text to end of line. Text commands (txt, paste, clip)
+               keep leading/trailing whitespace verbatim and apply TEXT
+               ESCAPES. All other commands trim it and then apply their own
+               sub-syntax. With [f] the payload is a file path and is
+               always trimmed. It may contain `[` and `]` freely; only the
+               first `]` after the command closes the modifiers:
+               txt[]a[b]c types a[b]c.
+  Examples:    txt[]  two spaces      -> types "  two spaces"
+               paste[f] ./a.py        -> file path "./a.py"
+
+== GRAMMAR ==
+  sequence     = { line , EOL } , [ line ] ;
+  line         = ws , ( empty | comment | statement ) ;
+  empty        = "" ;
+  comment      = "#" , { any } ;
+  statement    = command , [ bracket-form ] ;
+  command      = lower , { lower | digit } ;
+  bracket-form = "[" , [ modifiers ] , "]" , payload ;
+  modifiers    = modifier , { "," , modifier } ;
+  modifier     = kv | flags ;
+  kv           = key , "=" , value ;
+  key          = lower , { lower | digit } ;
+  value        = item , { ":" , item } ;
+  item         = { any - ( "," | ":" | "]" | EOL ) } ;
+  flags        = flag , { flag } ;
+  flag         = lower ;
+  payload      = { any - EOL } ;
+  ws           = { " " | TAB } ;
+  EOL          = "\n" | "\r\n" ;
+  lower        = "a" ... "z" ;   digit = "0" ... "9" ;
+
+  Sub-syntaxes used inside payloads and values (COORDINATES, DURATIONS):
+  point        = coord , "," , coord ;
+  coord        = [ "-" ] , number , [ "%" ] ;
+  points       = point , { ws , point } ;
+  rect         = coord , ":" , coord , ":" , number , ":" , number ;
+  dur          = number , [ "ms" | "s" ] ;
+
+== MODIFIERS ==
+  Modifiers accepted by more than one command. Per-command modifiers are
+  listed under COMMANDS.
+  c s a m p    modifier keys held for the whole command (MODIFIER KEYS).
+               Accepted by k m c md mu drag scroll only.
+  d=DUR        wait DUR after this command instead of the global delay.
+               Also applies to query/sleep/set/cap/exec/open, which get no
+               delay by default (explicit beats default). Max 10s.
+  ms=DUR       the command's own timing (gap, duration or settle time; the
+               meaning is listed per command). Max 10s.
+  f            the payload is a LOCAL (client-side) file path. txt paste
+               clip use the file's contents; qclip writes to it.
+  r            coordinates: relative to the pointer. win/qwin: the selector
+               is a regular expression.
+  w            coordinates and cap: the frame is the current window
+               (STATE MACHINE).
+  disp=N       coordinates and cap: the frame is display N (0-based).
+
+== MODIFIER KEYS ==
+  Single-letter flags, held for the whole command. Pressed in the order
+  c, s, a, m/p and released in reverse when the command ends.
+    flag  meaning   macOS      Windows
+    c     Control   Control    Ctrl
+    s     Shift     Shift      Shift
+    a     Alt       Option     Alt
+    m     Meta      Command    Win
+    p     Primary   Command    Ctrl     (the platform's copy/paste/save key)
+  Accepted by: k m c md mu drag scroll. Not accepted by txt/kd/ku (hold a
+  modifier across lines with `kd[]ctrl` ... `ku[]ctrl`).
+  There is no separate flag for the Win key: `m` is Meta (Command/Win) and
+  `w` is the window FRAME flag. The key name `win` (= meta = cmd) is fine
+  inside a payload: k[]win.
+  CAVEAT: `c` is ALWAYS Control, even on macOS. Use `p` for the platform's
+          copy/paste/save modifier and `m` for Command/Win explicitly.
+          `k[c]c` in a macOS terminal sends ^C (interrupt), NOT Cmd+C.
+          Check `qinfo` (primary=cmd|ctrl) if unsure.
+
+== COORDINATES ==
+  x,y in LOGICAL units: macOS points, Windows physical pixels (the process
+  is per-monitor DPI aware). Integers or decimals; rounded when executed.
+  A default capture (scale=1) is 1:1 with this space, so pixel positions
+  read from the PNG are valid input coordinates.
+  The frame is chosen by a modifier; the coordinate text is always x,y.
+    (none)   absolute desktop. Origin = top-left of the primary display,
+             y grows downward; other displays may be negative. m[]1024,133
+    r        relative to the current pointer position.          m[r]10,-5
+    w        relative to the top-left of the current window's frame, title
+             bar included (win; else the OS-focused window).    c[w]200,80
+    disp=N   relative to display N (0-based, qdisp order).      m[disp=1]0,0
+    N%       percent of the frame's size, decimals allowed.     c[w]50%,50%
+             c[]50%,50% is the centre of the desktop.
+  Rules (violations are syntax errors, exit 2):
+    - at most ONE frame modifier (r, w, disp=) per command;
+    - N% cannot be combined with r (a relative move has no reference size).
+  Bounds: a coordinate outside its frame is E_BOUNDS. Absolute and disp=
+  coordinates are checked in preflight against the real desktop: nothing
+  runs, exit 4. r/w/% coordinates depend on run-time state (pointer,
+  window) and are checked right before their line runs; that line fails
+  (exit 1). r is checked on the resulting position. Offline validation
+  (--check, exit 2) checks only the number format because it does not know
+  the desktop size.
+
+== DURATIONS ==
+  DUR = number with an optional suffix: no suffix = milliseconds, `ms`, or
+  `s`: 500, 1.5s, 66ms, 0.25s. Decimals allowed. Negative, NaN and Inf are
+  errors. Used by sleep, d=, ms=, wait=, timeout=, --delay and --timeout.
+
+== TEXT ESCAPES ==
+  Apply to the payload of txt, paste and clip only. Everywhere else (exec,
+  cap, win, ...) a backslash is an ordinary character.
+    \n       txt: presses Return       paste/clip: newline character
+    \t       txt: presses Tab          paste/clip: tab character
+    \\       a backslash
+    \uXXXX   the Unicode code point XXXX (4 hex digits)
+    other    syntax error. txt[]C:\Users fails on \U; write C:\\Users.
+  With [f] no escapes are applied: the file's contents are used as-is
+  (UTF-8, at most 64 KiB). Use [f] for multi-line text.
+
+== WINDOW SELECTORS ==
+  Payload of win and qwin.
+    id:<n>       window id as printed by qwin (most precise)
+    pid:<n>      the frontmost window of process <n>
+    app:<name>   application name, case-insensitive substring
+                 (macOS: bundle name, Windows: exe name)
+    <text>       window title, case-insensitive substring. With the r flag
+                 <text> is an RE2 regular expression matched on the title.
+  Several matches: the frontmost (z-order) wins and the result line reports
+  matched=N (status warn when N > 1). win[wait=DUR] polls every 100ms until
+  a match appears or DUR elapses. No match is err E_NOWINDOW for win; an
+  empty list is NOT an error for qwin.
+
+== COMMANDS ==
+  Notation: command, then [modifiers] with defaults in parentheses, then the
+  payload. Common modifiers (c s a m p, d=, r, w, disp=, f) are described
+  under MODIFIERS and repeated here only where they matter. Every example is
+  in bracket form.
+
+  KEYBOARD
+  k [n=1 repeat, ms=30 gap]                       keys...
+      Press keys. Space-separated names are pressed one after another; a
+      `+` chord is pressed in order and released in reverse. A chord holds
+      at most 8 keys INCLUDING modifier flags (k[csam]a = 5 keys); at most
+      64 sequential keys per line.
+        k[c]v   k[]enter enter   k[n=3]tab   k[]ctrl+shift+a   k[p]s
+  kd                                              keys...
+      Press and hold until ku or the end of the run. Keys still held when
+      the run ends or fails are released automatically with a warning.
+  ku                                              keys...
+      Release keys held by kd. A key not held by kd = validation error.
+  txt [ms=0 per-character gap, f]                 text | file
+      Type Unicode text character by character. TEXT ESCAPES apply
+      (\n = Return, \t = Tab). Modifier-key flags are not accepted.
+      Leading/trailing spaces are typed verbatim.
+
+  MOUSE
+  m [ms=0 duration, r|w|disp=]                    x,y
+      Move the pointer. ms>0 interpolates the motion over that time.
+  c [b=left|right|middle, n=1 clicks, ms=60 gap, r|w|disp=]   [x,y]
+      Click; moves first when x,y is given, else clicks in place.
+        c[n=2]   c[b=right]100,200   c[s]   c[w]50%,50%
+      A button already held by md cannot be clicked (validation error).
+  md [b=left|right|middle, r|w|disp=]             [x,y]
+      Press and hold a button (moving first when x,y is given). A button
+      that is already held = validation error.
+  mu [b=left|right|middle]
+      Release a button held by md. Not held = validation error.
+  drag [b=left, ms=500 total, steps=20, r|w|disp=]   x1,y1 x2,y2 [x3,y3 ..]
+      Move to the first point, press, follow the polyline in evenly spaced
+      steps over ms, release. One point = drag from the current position to
+      it. The button is released even when the drag fails midway. A button
+      already held by md cannot be dragged (validation error).
+  scroll [by=line|page]                           up|down|left|right [ticks]
+      Scroll at the current pointer position; move first with m. ticks
+      defaults to 3 (1..50) and is payload only: there is no n= here.
+        scroll[]down 2   scroll[by=page]down
+
+  CLIPBOARD
+  clip [f]                                        text | file
+      Set the target's clipboard to text (no paste).
+  paste [f, ms=50 settle]                         text | file
+      Set the clipboard, wait ms, press primary+v. If setting the clipboard
+      fails no key is sent (E_CLIPBOARD). Never presses Return. The previous
+      clipboard content is not restored.
+  qclip [f]                                       [file]
+      Print the target clipboard text on one line with \n escaped, or with
+      [f] save it verbatim to a LOCAL file.
+
+  WINDOWS / APPS / PROCESSES
+  win [r regex, wait=0]                           selector
+      Find a window (WINDOW SELECTORS), unminimize, raise and focus it; it
+      becomes the current window for w frames and cap[w]. Result line:
+      id= app= matched= x,y WxH "title". No match, or the OS refusing to
+      bring the window to the front = err E_NOWINDOW.
+  qwin [r]                                        [selector]
+      List visible windows (all when no selector). Line format: OUTPUT.
+  open [wait=0]                                   app | path
+      Launch or activate an application (macOS `open -a <name>`, Windows
+      ShellExecute) or open a path (macOS `open <path>`). Payload trimmed.
+      Any path is allowed (no allowlist). Launch failure = err E_EXEC.
+      wait=DUR waits for a window of the app to appear (err E_NOWINDOW
+      after DUR). No default delay (like exec): use open[wait=5s],
+      win[wait=], sleep or d= to wait for the UI.
+  exec [timeout=10s, shell, noerr]                command...
+      Run a command ON THE TARGET machine and wait for it (timeout <= 60s).
+      Without `shell`: the trimmed payload is split on spaces into argv
+      ("..." quoting only; no escapes, no variable or glob expansion) and
+      run directly:
+        exec[]git -C "C:\work dir" status -> git, -C, C:\work dir, status
+      With `shell`: the whole payload goes to the LOGIN shell: macOS
+      `$SHELL -lc <payload>` (`/bin/zsh -lc` when $SHELL is empty), Windows
+      `cmd /C <payload>` (always cmd; call powershell explicitly). The login
+      shell's rc files restore PATH when the server was started by launchd
+      or Task Scheduler. Pipes, redirection, globs and ~ need `shell`.
+      cwd and environment = the server process (local: this process).
+      stdin is closed. stdout and stderr are captured (each <= 64 KiB; the
+      excess is dropped and truncated=1 is reported). On Windows the bytes
+      are decoded from the console output code page (the ANSI code page
+      when there is no console) to UTF-8; undecodable bytes become U+FFFD.
+      Exit code != 0 = err E_EXEC and the run stops (fail-fast), UNLESS
+      `noerr`: then the line is ok, exit=N is only reported and the run
+      continues (for grep/diff-style commands). timeout expiry kills the
+      process = err E_TIMEOUT; noerr never softens that. -k continues past
+      either. No default delay (d= applies).
+        exec[]git -C "C:\work dir" status
+        exec[shell]dir /b *.blend
+        exec[timeout=60s]blender -b x.blend -f 1
+        exec[noerr]grep -q TODO notes.txt   -> 6 ok exec exit=1 ms=8 ...
+      exec runs with the server account's privileges (--help-remote).
+
+  CAPTURE
+  cap [w|disp=N, rect=x:y:w:h, scale=1, fmt=png|jpg, q=85, n=1, ms=100,
+       label=cap, cursor]                         [path]
+      Save a screenshot to a LOCAL file and print its path, WxH, origin=x,y
+      (logical coordinate of the image's top-left) and scale.
+        w | disp=N     capture the current window or display N (at most
+                       one of them; default: the whole desktop).
+        rect=x:y:w:h   region in logical coordinates of the chosen frame
+                       (`:`-separated because it is a modifier value).
+        scale=F        1 = image pixels equal input coordinates (Retina is
+                       downscaled). 0.1..4.0, or `native` for full pixels.
+        fmt=, q=       png (default) or jpg with quality q (1..100, 85).
+        n=, ms=        frame burst: n frames (<= 120) every ms; files get
+                       -00, -01, ... suffixes. Timing is best effort.
+        label=         file-name component, [A-Za-z0-9][A-Za-z0-9_-]{0,47}.
+        cursor         draw the pointer into the image (off by default).
+        path           explicit LOCAL output path; otherwise automatic
+                       (see "Capture paths" under OUTPUT).
+        cap   cap[w]   cap[rect=0:0:600:400]   cap[w,scale=0.5,fmt=jpg]
+        cap[n=3,ms=100,label=orbit]   cap[]./shot.png
+      No default delay (d= applies).
+
+  FLOW
+  sleep                                           DUR
+      Wait (<= 60s). No default delay.
+  set [delay=DUR, txtms=DUR, keyms=DUR]
+      Change defaults for the following lines. delay = pause after every
+      command except query/sleep/set/cap/exec/open (initial 100ms);
+      txtms = txt per-character gap (0); keyms = k gap (30ms). An explicit
+      d= always applies. No default delay.  set[delay=200]
+  #                                               any text
+      Comment.
+
+  QUERY  (no default delay; an explicit d= applies)
+  qinfo
+      One line: os= osver= arch= ver= primary=cmd|ctrl desktop=X,Y WxH
+      displays=N session=active|locked|inactive perms=...
+      macOS: perms=accessibility:ok|missing,screen:ok|missing.
+      Windows: perms=n/a elevated=0|1.
+      session: active = input and capture possible; locked = lock screen,
+      screen saver or UAC secure desktop; inactive = not a GUI session (SSH
+      shell on macOS, Windows session 0 or a disconnected RDP session).
+      Anything but ok/active: --help-macos / --help-windows.
+  qdisp
+      One line per display: idx, origin, size, scale, primary (OUTPUT).
+  qmouse
+      Current pointer position:  "  x,y".
+
+== KEY NAMES ==
+  a-z 0-9 f1-f24 ctrl shift alt|option meta|cmd|win primary enter|return
+  tab esc|escape space backspace delete insert home end pageup pagedown
+  up down left right period comma minus equal slash backslash semicolon
+  quote grave lbracket rbracket numpad0-numpad9 decimal numadd numsub
+  nummul numdiv numenter capslock printscreen scrolllock pause volup
+  voldown mute
+  Names are case-insensitive PHYSICAL keys (US layout positions), not
+  characters: on a non-US layout k[]a may produce another character. To
+  enter characters use txt. A name the platform cannot produce fails in
+  preflight (exit 4).
+
+== EXECUTION ==
+  argv/stdin/file -> parse -> IR -> validate -> connect -> preflight -> run
+                       exit 2           exit 2      exit 3     exit 4   exit 1
+
+  1. Parse every line into the IR. A syntax error reports line, column and
+     the source text (E_SYNTAX).
+  2. Static validation (E_VALIDATE): value ranges and LIMITS; held balance
+     (every ku/mu matches an earlier kd/md; c/md/drag on a button already
+     held by md is rejected); one frame modifier; no % with r; chords of at
+     most 8 keys including flags; [f] files exist, are UTF-8 and <= 64 KiB.
+     --check and --ir stop here and never connect.
+  3. Connect: local = in-process backend. Remote = GET /v1/info on the
+     profile's endpoint; failure = exit 3 (E_CONNECT).
+  4. Preflight on the target (failure = exit 4, nothing runs): permissions
+     (E_PERMISSION), session active and unlocked (E_SESSION), no key or
+     mouse button physically held down (E_INPUT), absolute and disp=
+     coordinates inside the desktop (E_BOUNDS), every key name supported on
+     that platform (E_INPUT).
+  5. Run the lines in order. After each line wait d= when given, otherwise
+     the global delay (100ms) unless the command is query/sleep/set/cap/
+     exec/open. Each result is streamed as soon as its line completes.
+  6. End of run - normal, failed, deadline expired or interrupted (Ctrl-C,
+     connection loss): every held key/button is released in reverse order.
+     With --cap-on-error one extra capture is taken after a failure.
+
+== STATE MACHINE ==
+  One invocation is one state machine; its lines share:
+    current window      none at start (w frames then use the OS-focused
+                        window at that moment); set by win.
+    held keys/buttons   empty at start; changed by kd/ku/md/mu. Modifier
+                        flags are held only within their own command.
+    pointer position    owned by the OS; changed by m c md drag; read by
+                        qmouse.
+    delay/txtms/keyms   100ms / 0 / 30ms; changed by set. The initial delay
+                        is --delay, else the profile's delay, else 100ms.
+    capture counter and out directory   client side; advanced by cap.
+  Nothing persists between invocations and the server keeps no state.
+  Held keys/buttons are released in reverse order when the run ends, fails,
+  times out or is interrupted (Ctrl-C, connection loss).
+
+== ERROR POLICY ==
+  fail-fast (default): a failed line stops the run; later lines are
+    reported as skip; held keys are released; exit 1.
+  -k/--keep-going: continue after failures. Keys/buttons taken by the
+    failed line are released immediately so held state stays consistent.
+    The final exit is still 1 when any line failed.
+  qwin with zero matches is not a failure; win with no match is.
+  exec: exit != 0 is err E_EXEC (fail-fast) unless the line has noerr;
+    E_TIMEOUT is never softened by noerr. -k relaxes every line, noerr
+    relaxes its own line only.
+  Deadline: --timeout (300s) travels to the server as deadline_ms and is
+    enforced there too (local: in-process). On expiry the running line is
+    aborted (interpolated moves, capture bursts, win[wait=] polling and exec
+    children are killed), held keys are released, that line is reported as
+    err E_TIMEOUT, the rest as skip, and a normal done line follows: exit 1.
+  Connection loss: when the stream ends without done, or done has not
+    arrived within the deadline plus 5s grace, the client prints done with
+    state=unknown and exits 5. The server treats a dropped connection as a
+    cancel and releases held keys on its side. Run qinfo and cap before
+    sending more input.
+  `ok` means the OS accepted the input; it does not prove the application
+    reacted. Verify with cap.
+
+== OUTPUT ==
+  Plain format (default): one line per command, space-separated fields, the
+  first two fixed. Warnings and diagnostics go to stderr; stdout carries
+  only this format.
+
+  out /tmp/gh/
+  1 ok win id=2314 app=Blender matched=1 0,25 1440x875 "Untitled - Blender"
+  2 ok k
+  3 ok txt chars=5
+  4 ok cap /tmp/gh/0000-cap-20260907T131502.114Z.png 1440x900 origin=0,0 scale=1
+  5 ok qwin
+    2314	4120	Blender	0,25 1440x875	*	Untitled - Blender
+    2290	612	Terminal	1440,25 1120x875		zsh - 120x40
+  6 ok exec exit=0 ms=41 stdout=34B stderr=0B
+    1	C:\Users\me\scenes\untitled.blend
+  7 err c[w]1500,300: coordinates outside current window (E_BOUNDS)
+  8 skip cap
+  done ok=6 err=1 skip=1 elapsed=1875ms held_released=0
+
+  First line   out <capture directory>
+  Per line     <n> <ok|err|skip|warn> <command> [details...]
+               <n> = 1-based input line number counting comments and blank
+               lines, so it matches your input (argv or -f, never both).
+               warn = ok with a caveat (matched=N > 1, auto-released keys).
+  Errors       <n> err <source>: <message> (<E_CODE>)
+  Last line    done ok=N err=N skip=N elapsed=<ms>ms held_released=N
+               [state=unknown]   (state=unknown only with exit 5)
+  Multi-line results are indented two spaces with TAB-separated fields:
+    qwin    <id>\t<pid>\t<app>\t<x>,<y> <w>x<h>\t<flags>\t<title>
+            flags: * focused, min minimized, hidden
+    qdisp   <idx>\t<x>,<y> <w>x<h>\tscale=<f>\t[primary]
+    qmouse  <x>,<y>
+    exec    header  <n> ok exec exit=0 ms=41 stdout=34B stderr=0B
+            then one line per output line:  <1|2>\t<text>  (1 = stdout,
+            2 = stderr, in order of appearance, best effort). Output lines
+            also follow err results (non-zero exit, timeout). With noerr a
+            non-zero exit is still ok: read exit=N yourself.
+    cap     <path> <w>x<h> origin=<x>,<y> scale=<f>
+    win     id=<id> app=<app> matched=<N> <x>,<y> <w>x<h> "<title>"
+  Capture paths: <out>/<NNNN>-<label>-<UTC timestamp>.<fmt>; NNNN is the
+  per-run counter, n>1 adds -00, -01, ... . <out> = --out, else
+  $GOTTO_HANDO_OUT, else the profile's out, else
+  $TMPDIR/gotto-hando/<profile>/<run-id>/. The directory is printed as the
+  first stdout line. A cap payload overrides the path for that capture.
+
+== JSONL ==
+  --jsonl prints one JSON object per line. First:
+    {"event":"start","out":"<dir>","profile":"<name>","target":{"os":..}}
+  then one object per input line, and last:
+    {"event":"done","ok":N,"err":N,"skip":N,"elapsed_ms":N,
+     "held_released":N[,"state":"unknown"]}
+  Per-line objects carry line, status, cmd, t_ms and command-specific
+  fields:
+    {"line":4,"status":"ok","cmd":"cap","path":"...","w":1440,"h":875,
+     "origin":[0,25],"scale":1,"t_ms":312}
+    {"line":6,"status":"ok","cmd":"exec","exit":0,"stdout":"...\n",
+     "stderr":"","truncated":false,"t_ms":41}
+    {"line":7,"status":"err","cmd":"c","src":"c[w]1500,300",
+     "code":"E_BOUNDS","msg":"coordinates outside current window"}
+  Capture bursts report each frame's scheduled and actual time and the
+  slippage between them.
+
+== ERROR CODES ==
+  Printed as (<E_CODE>) at the end of err lines and as "code" in JSONL.
+  E_SYNTAX      malformed line (exit 2)
+  E_VALIDATE    static validation failed: range, held balance, limits,
+                [f] file (exit 2)
+  E_CONNECT     unknown profile, host not loopback, tunnel or server down,
+                token rejected, version mismatch (exit 3)
+  E_PERMISSION  macOS Accessibility / Screen Recording missing (exit 4)
+  E_SESSION     session locked or not a GUI session (exit 4)
+  E_BOUNDS      coordinate outside its frame (preflight: exit 4; r/w/% at
+                run time: that line fails)
+  E_NOWINDOW    win or open[wait=] found no window, or the OS refused to
+                bring it to the front
+  E_INPUT       synthetic input blocked or rejected (macOS Secure Input, a
+                physically held key in preflight, unsupported key name)
+  E_CAPTURE     capture failed (no display, blank capture)
+  E_CLIPBOARD   clipboard read/write failed (paste then sends no key)
+  E_EXEC        exec exit != 0 without noerr, spawn failure, open failure
+  E_TIMEOUT     exec timeout= or --timeout expired (the run still ends
+                with a normal done line, exit 1)
+  E_UNKNOWN     anything else
+
+== EXIT CODES ==
+  0  every line ok
+  1  one or more lines failed at run time (some input was executed;
+     includes --timeout expiry: E_TIMEOUT, held keys released)
+  2  syntax/validation error, or -f mixed with [line ...] (nothing ran)
+  3  profile/connection error (nothing ran)
+  4  preflight failed: permission, session, physically held key, absolute
+     coordinate bounds, key support (nothing ran)
+  5  state unknown: connection lost mid-run; held keys may still be down
+
+== LIMITS ==
+  lines per run          1000
+  line length            64 KiB; an [f] file is a separate 64 KiB
+  k keys                 64 sequential; 8 per chord including flags
+  scroll ticks           1..50
+  sleep                  <= 60s
+  d=, ms=                <= 10s
+  wait=                  <= 60s
+  exec timeout=          <= 60s (default 10s)
+  exec stdout/stderr     <= 64 KiB each (excess dropped, truncated=1)
+  drag                   1..200 payload points (path 2..200 including the
+                         current position); steps 1..200
+  label=                 [A-Za-z0-9][A-Za-z0-9_-]{0,47}
+  cap n=                 <= 120; at most 121 captures per run
+  scale=                 0.1..4.0 or native
+  --timeout              default 300s, enforced by client and server
+  argv                   OS limit (Windows 32K characters, macOS 1 MiB);
+                         use [f] for large paste payloads
+
+== CAVEATS ==
+  CAVEAT: Unicode text injection (txt) is ignored by some apps (Blender,
+          many games, Win32 consoles). Use `k` per key (digits, period,
+          minus, numpad*) or `paste` instead, then verify with `cap`.
+  CAVEAT: paste never presses Return, but a console or editor may execute
+          pasted newlines. For a Python console paste a single-line
+          exec(compile(...)) without a trailing newline, inspect with cap,
+          then `k[]enter`.
+  CAVEAT: Ctrl+V is not "paste" in every app (terminals). Use `clip[]...`
+          followed by `k[s]insert` or `k[cs]v`.
+  CAVEAT: Every line with a payload contains [ and ]. Always single-quote
+          lines (zsh aborts with "no matches found" otherwise, bash may
+          glob-expand them). `txt[]  x` types two spaces then x; other
+          commands trim the payload.
+  CAVEAT: Backslash sequences other than \n \t \\ \uXXXX are errors in
+          txt/paste/clip. Escape Windows paths (C:\\Users). In every other
+          command (exec, cap, ...) a backslash is an ordinary character.
+  CAVEAT: An active IME (e.g. Korean) composes `k` letters. Prefer txt for
+          text (it bypasses the IME in most apps); check with cap.
+  CAVEAT: `win` reports E_NOWINDOW when the OS refused to focus the window
+          (Windows foreground rules) and input reports E_INPUT when the
+          platform blocks synthetic input (macOS Secure Input). Elevated
+          Windows apps ignore input SILENTLY (ok, no effect): see
+          --help-windows. Platform details: --help-macos, --help-windows.
+  CAVEAT: exec runs with the server account's privileges - the same power
+          as that account's shell (--help-remote). There is no allowlist.
+          exec[shell] uses the login shell, so PATH is usually complete; if
+          a command is still not found use an absolute path.
+  CAVEAT: Frame bursts (cap[n=]) are best effort; the first frame may be
+          late. Each frame reports its actual time and slippage in --jsonl.
+  CAVEAT: If the run ends with exit 5 (connection lost), held keys may
+          still be down on the target. Run `qinfo` and `cap` before sending
+          more input.
+  CAVEAT: exit 4 before anything ran means the TARGET is not ready
+          (permissions, locked/inactive session, physically held key,
+          absolute coordinate out of bounds, unsupported key). Read the
+          message; for perms/session fixes see --help-macos/--help-windows.
+
+== SHELL QUOTING ==
+  [ ] ! * ? $ ` # and spaces are special to shells, and every payload line
+  contains [ ]. Single-quote every line, or use a quoted heredoc / -f:
+    gotto-hando local 'k[c]a' 'txt[]hello, world!' 'cap'
+    gotto-hando winbox <<'EOF'
+    win[]Blender
+    k[c]a
+    cap
+    EOF
+    gotto-hando winbox -f steps.gh
+  A single quote inside a single-quoted line is written '\'' :
+    'txt[]it'\''s'  types  it's
+  `!` is safe inside single quotes; do not double-quote lines containing
+  `!` in zsh/bash (history expansion). A newline inside one argument splits
+  it into lines ($'m[]1,2\ncap' = two lines).
+  Windows cmd.exe has no single quotes; PowerShell re-quotes argv. On
+  Windows prefer -f FILE or stdin. Large paste payloads must use [f]
+  (argv limits: Windows 32K characters, macOS 1 MiB).
+
+== PROFILES ==
+  <profile> names a target PC. `local` is built in and cannot be redefined.
+  Others are read from ~/.config/gotto-hando/profiles.toml (macOS/Linux;
+  $XDG_CONFIG_HOME honored) or %APPDATA%\gotto-hando\profiles.toml
+  (Windows). Profile names match [a-z0-9][a-z0-9_-]*. A profile's host must
+  be loopback. `gotto-hando --profiles` prints the file path and the
+  entries. Unknown profile = exit 3.
+  The file format and how to set up a remote PC are in --help-remote.
+
+== EXAMPLES ==
+  # Focus Blender, select all, numeric transform via individual keys
+  # (Unicode text is ignored by Blender)
+  gotto-hando winbox 'win[]Blender' 'k[]a' 'k[]g' 'k[]x' 'k[]1 period 5' \
+                     'k[]enter' 'cap'
+  # Paste a script into a console window without executing, inspect, run
+  gotto-hando winbox 'win[r]Python Console' 'paste[f]./cmd.py' 'cap[w]' \
+    && gotto-hando winbox 'k[]enter' 'sleep[]500' 'cap[w]'
+  # Middle-button orbit and a burst of frames
+  gotto-hando winbox 'm[]960,540' 'drag[b=middle,ms=300]960,540 1100,540' \
+                     'cap[n=3,ms=100,label=orbit]'
+  # Shift-click two items, right-click, screenshot the window only
+  gotto-hando local 'win[]Finder' 'c[w]120,200' 'c[ws]120,240' \
+                    'c[w,b=right]120,240' 'cap[w,scale=0.5,fmt=jpg]'
+  # Relative nudge, hover, region capture
+  gotto-hando local 'm[r]0,-40' 'sleep[]300' 'cap[rect=0:0:600:400]'
+  # Scroll two pages down at a position
+  gotto-hando local 'm[]700,500' 'scroll[by=page]down 2'
+  # Hold a modifier across several actions
+  gotto-hando local 'kd[]shift' 'c[]100,100' 'c[]300,100' 'ku[]shift'
+  # Save the target clipboard to a local file
+  gotto-hando winbox 'k[c]a' 'k[c]c' 'qclip[f]./selection.txt'
+  # Launch an app, wait for its window, run a command on the target
+  gotto-hando winbox 'open[wait=10s]blender' 'win[]Blender' \
+                     'exec[]blender --version' 'exec[shell]dir /b C:\work'
+  # Render headless on the target (long-running: raise the exec timeout)
+  gotto-hando winbox 'exec[timeout=60s]blender -b C:\work\scene.blend -f 1' \
+                     'exec[shell]dir /b C:\work\render'
+  # Probe without failing the run: grep exits 1 when nothing matches
+  gotto-hando local 'exec[noerr,shell]grep -q ERROR ~/app.log' 'cap'
+  # Machine-readable
+  gotto-hando winbox --jsonl 'qwin' 'qdisp'
+  # Validate a file offline
+  gotto-hando local --check -f steps.gh
+
+== SEE ALSO ==
+  --help-macos     when `qinfo` shows perms=...:missing or session!=active
+                   on a Mac, after rebuilding on macOS, or before running
+                   --serve on a Mac. Signing identity, TCC permissions,
+                   --request-perms, LaunchAgent, Retina.
+  --help-windows   when `qinfo` shows session!=active on Windows, input is
+                   silently ignored by an elevated app, or before running
+                   --serve on Windows. Interactive session, Task Scheduler,
+                   SmartScreen, UAC/UIPI, DPI, cmd /C and code pages.
+  --help-remote    to control a PC other than `local`, or on exit 3
+                   (E_CONNECT). Server --serve/--token, ssh -L tunnel,
+                   profiles.toml, verification, the security model, the
+                   wire protocol.
