@@ -2,22 +2,25 @@ gotto-hando 0.1.0 - drive a macOS/Windows desktop from the shell, one command
 per line.
 
 This text is the complete, normative manual for USING the tool. Platform
-setup (permissions, sessions, signing, DPI) and remote setup (server, tunnel,
-profiles) are separate texts: see SEE ALSO at the end. Every section header
-has the fixed form "== NAME ==" so you can grep for it.
+setup (permissions, sessions, signing, DPI) and remote setup (ssh
+destinations, the Windows session bridge) are separate texts: see SEE ALSO
+at the end. Every section header has the fixed form "== NAME ==" so you can
+grep for it.
 
 == SYNOPSIS ==
-  gotto-hando <profile> [options] [line ...]
-  gotto-hando <profile> [options] -f <file|->
-  gotto-hando <profile>
-  gotto-hando --serve <port> [--token <t>] [--detach]
-  gotto-hando local|<profile> --request-perms
+  gotto-hando <dest> [options] [line ...]
+  gotto-hando <dest> [options] -f <file|->
+  gotto-hando <dest>
+  gotto-hando local|<dest> --request-perms
+  gotto-hando --bridge
   gotto-hando --help | --help-macos | --help-windows | --help-remote
-  gotto-hando --profiles | --version
+  gotto-hando --version
 
-  <profile>    `local` = this machine (in-process). Anything else = an entry
-               in profiles.toml (see PROFILES, --help-remote). Unknown
-               profile = exit 3.
+  <dest>       `local` = this machine (in-process). Anything else = an ssh
+               destination: `host`, `user@host`, or a Host alias from
+               ~/.ssh/config. gotto-hando then runs the same tool on that
+               machine through `ssh <dest>` (see DESTINATIONS,
+               --help-remote). ssh or remote start-up failure = exit 3.
   [line ...]   one command per argument. A newline inside one argument
                splits it into several lines ($'a\nb' passes two lines).
   -f FILE      read lines from FILE, or from stdin when FILE is `-`. -f and
@@ -25,15 +28,18 @@ has the fixed form "== NAME ==" so you can grep for it.
                numbers always refer to one source.
   (no lines)   stdin is a pipe: read lines from it. stdin is a TTY: run
                `qinfo`. When any [line ...] is given stdin is never read.
-  --serve      run the server on 127.0.0.1:<port> (see --help-remote).
-               --detach is Windows only: detach the console (--help-windows).
+  --bridge     run the session bridge: started by the user inside the GUI
+               session and left running, it executes the runs that arrive
+               over ssh (DESTINATIONS, --help-remote). Without it no
+               ssh-started run can touch the desktop.
   --request-perms
                macOS only: trigger the Accessibility / Screen Recording
-               prompts in the GUI session of `local` or of the <profile>'s
-               server. Details under OPTIONS and in --help-macos.
-  --help*      print one help text and exit 0. Standalone: no <profile>;
-               other options or lines given together with it are ignored.
-               There is no `--help <topic>`; grep for "== NAME ==" instead.
+               prompts, on this Mac for `local` or on the <dest>'s screen
+               through its bridge. Details under OPTIONS and in
+               --help-macos.
+  --help*      print one help text and exit 0. Standalone: no <dest>; other
+               options or lines given together with it are ignored. There
+               is no `--help <topic>`; grep for "== NAME ==" instead.
 
   Options start with `-`; command lines start with a lowercase letter, `#`
   or whitespace, so options and lines may be given in any order.
@@ -42,42 +48,71 @@ has the fixed form "== NAME ==" so you can grep for it.
   -f, --file PATH    sequence file (`-` = stdin). Not combinable with
                      [line ...] (exit 2).
   -k, --keep-going   do not stop at the first failed line (ERROR POLICY).
-  --delay DUR        initial global delay (default 100ms). Overrides the
-                     profile's `delay`.
+  --delay DUR        initial global delay (default 100ms).
   --out DIR          capture directory (see "Capture paths" under OUTPUT).
+                     Always a LOCAL directory, also for a <dest>.
   --jsonl            JSON Lines output instead of the plain format (JSONL).
-  --check            parse and validate only; no connection, no preflight;
-                     exit 0 or 2.
-  --ir               print the IR as JSON and exit; no connection.
+  --check            parse and validate only; no ssh, no preflight; exit 0
+                     or 2.
+  --ir               print the IR as JSON (IR JSON) and exit; no ssh.
   --cap-on-error     after a failed line, release held keys and take one
                      extra capture.
-  --timeout DUR      whole-run deadline (default 300s). Sent to the server
-                     as deadline_ms and enforced by BOTH sides. Expiry is
-                     err E_TIMEOUT on the running line and exit 1, never
-                     exit 5.
+  --timeout DUR      whole-run deadline (default 300s). Forwarded to the
+                     remote process, which enforces it; the local side also
+                     kills ssh at deadline + 5s. Expiry is err E_TIMEOUT on
+                     the running line and exit 1, never exit 5.
   --ping             connect and check permissions/session only (= qinfo).
   -q, --quiet        omit `ok` lines. err/warn lines, query results and
                      capture lines are still printed.
-  --profiles         print the profiles.toml path and its entries; exit 0.
+  --remote-bin PATH  <dest> only: the gotto-hando binary to run on <dest>
+                     (default `gotto-hando`, resolved on the remote PATH as
+                     sshd sets it up - often NOT your interactive PATH; give
+                     an absolute path when `ssh <dest> gotto-hando --version`
+                     fails). Never forwarded.
+  --inline-captures  used by the <dest> wrapper on the remote side: with
+                     --jsonl, capture objects carry the image as base64
+                     ("data", "fmt") instead of writing a file and printing
+                     "path". Also accepted with plain `local` (then no
+                     capture files are written). Implies nothing else.
+  --expect-version VER
+                     refuse to run unless this binary's version equals VER:
+                     stderr `version mismatch: remote <x>, expected <y>`,
+                     exit 3, nothing else printed. Used by the <dest>
+                     wrapper, which always forwards it with the local
+                     version (EXECUTION step 3).
+  --bridge           run the session bridge in the foreground until
+                     interrupted (Ctrl-C) or killed. Start it from a
+                     terminal window inside the GUI session, or register
+                     it at logon (--help-macos / --help-windows). Standalone
+                     like --help*: no <dest>, no lines. Exit 0 on Ctrl-C, 2
+                     if another bridge of this user is already running.
+                     Protocol and endpoint: --help-remote SESSION BRIDGE.
   --version          print the version; exit 0.
   --request-perms    macOS only; used as `local --request-perms` or
-                     `<profile> --request-perms`.
-                     local: this process calls
+                     `<dest> --request-perms`.
+                     A process inside the GUI session calls
                      AXIsProcessTrustedWithOptions(prompt=true) and
                      CGRequestScreenCaptureAccess() so macOS shows its
                      prompts, then prints one line
                      `perms=accessibility:ok|missing,screen:ok|missing`.
-                     <profile>: calls the server's POST /v1/request-perms;
-                     the --serve process does the same inside ITS GUI
-                     session and returns the same line.
-                     Exit 0 when both are ok, else 4. Prompts appear only
-                     from inside a GUI session (a terminal window, a
-                     LaunchAgent); from an SSH shell it prints `missing`
-                     without any prompt. A person must still flip the
-                     toggles, and Screen Recording takes effect only after
-                     the process (server) restarts.
-                     Windows local: exit 2. Windows server: no-op,
-                     `perms=n/a`, exit 0.
+                     local from a terminal: this process. <dest> (or local
+                     started by ssh): the bridge on that Mac does it, so
+                     the prompts appear on THAT Mac's screen; no bridge =
+                     E_SESSION, exit 4. Exit 0 when both are ok, else 4.
+                     The prompt only adds the app to the list: a person
+                     must flip the toggles, and Screen Recording takes
+                     effect only for processes started afterwards (restart
+                     the bridge). Windows: exit 2 - locally as a usage
+                     error before anything runs; through a <dest> the
+                     remote process prints its start object and then
+                     abort E_VALIDATE ("--request-perms is macOS only").
+
+  Forwarded to the remote process when <dest> is not `local`: --jsonl,
+  --inline-captures and --expect-version <local version> (always); -q,
+  --delay, --timeout, -k, --cap-on-error, --request-perms (when given).
+  Applied locally only: --out, --remote-bin. --check and --ir finish
+  locally and never start ssh. The sequence itself travels on the remote
+  process's stdin (DESTINATIONS).
 
 == QUICK START ==
   $ gotto-hando local 'win[]Safari' 'k[m]l' 'txt[]example.com\n' \
@@ -177,7 +212,10 @@ has the fixed form "== NAME ==" so you can grep for it.
                delay by default (explicit beats default). Max 10s.
   ms=DUR       the command's own timing (gap, duration or settle time; the
                meaning is listed per command). Max 10s.
-  f            the payload is a LOCAL (client-side) file path. txt paste
+  f            the payload is a LOCAL file path - the machine you invoke
+               gotto-hando on, also for a <dest>: the contents are read
+               here and inlined into the line before it is sent (the
+               inlined line must fit the 64 KiB line limit). txt paste
                clip use the file's contents; qclip writes to it.
   r            coordinates: relative to the pointer. win/qwin: the selector
                is a regular expression.
@@ -338,9 +376,11 @@ has the fixed form "== NAME ==" so you can grep for it.
       With `shell`: the whole payload goes to the LOGIN shell: macOS
       `$SHELL -lc <payload>` (`/bin/zsh -lc` when $SHELL is empty), Windows
       `cmd /C <payload>` (always cmd; call powershell explicitly). The login
-      shell's rc files restore PATH when the server was started by launchd
-      or Task Scheduler. Pipes, redirection, globs and ~ need `shell`.
-      cwd and environment = the server process (local: this process).
+      shell's rc files restore PATH when the executing process is a bridge
+      started by launchd or Task Scheduler. Pipes, redirection, globs and ~
+      need `shell`.
+      cwd and environment = the process that runs the sequence: this
+      process for `local` in a terminal, the bridge on a <dest>.
       stdin is closed. stdout and stderr are captured (each <= 64 KiB; the
       excess is dropped and truncated=1 is reported). On Windows the bytes
       are decoded from the console output code page (the ANSI code page
@@ -354,27 +394,25 @@ has the fixed form "== NAME ==" so you can grep for it.
         exec[shell]dir /b *.blend
         exec[timeout=60s]blender -b x.blend -f 1
         exec[noerr]grep -q TODO notes.txt   -> 6 ok exec exit=1 ms=8 ...
-      exec runs with the server account's privileges (--help-remote).
+      exec runs with the privileges of the account that runs gotto-hando
+      there (on a <dest>: the ssh account; --help-remote).
 
   CAPTURE
-  cap [w|disp=N, rect=x:y:w:h, scale=1, fmt=png|jpg, q=85, n=1, ms=100,
-       label=cap, cursor]                         [path]
-      Save a screenshot to a LOCAL file and print its path, WxH, origin=x,y
-      (logical coordinate of the image's top-left) and scale.
+  cap [w|disp=N, rect=x:y:w:h, scale=1, n=1, ms=100, label=cap]   [path]
+      Save a PNG screenshot to a LOCAL file and print its path, WxH,
+      origin=x,y (logical coordinate of the image's top-left) and scale.
         w | disp=N     capture the current window or display N (at most
                        one of them; default: the whole desktop).
         rect=x:y:w:h   region in logical coordinates of the chosen frame
                        (`:`-separated because it is a modifier value).
         scale=F        1 = image pixels equal input coordinates (Retina is
                        downscaled). 0.1..4.0, or `native` for full pixels.
-        fmt=, q=       png (default) or jpg with quality q (1..100, 85).
         n=, ms=        frame burst: n frames (<= 120) every ms; files get
                        -00, -01, ... suffixes. Timing is best effort.
         label=         file-name component, [A-Za-z0-9][A-Za-z0-9_-]{0,47}.
-        cursor         draw the pointer into the image (off by default).
         path           explicit LOCAL output path; otherwise automatic
                        (see "Capture paths" under OUTPUT).
-        cap   cap[w]   cap[rect=0:0:600:400]   cap[w,scale=0.5,fmt=jpg]
+        cap   cap[w]   cap[rect=0:0:600:400]   cap[w,scale=0.5]
         cap[n=3,ms=100,label=orbit]   cap[]./shot.png
       No default delay (d= applies).
 
@@ -392,13 +430,16 @@ has the fixed form "== NAME ==" so you can grep for it.
   QUERY  (no default delay; an explicit d= applies)
   qinfo
       One line: os= osver= arch= ver= primary=cmd|ctrl desktop=X,Y WxH
-      displays=N session=active|locked|inactive perms=...
+      displays=N session=active|bridge|locked|inactive perms=...
       macOS: perms=accessibility:ok|missing,screen:ok|missing.
       Windows: perms=n/a elevated=0|1.
-      session: active = input and capture possible; locked = lock screen,
-      screen saver or UAC secure desktop; inactive = not a GUI session (SSH
-      shell on macOS, Windows session 0 or a disconnected RDP session).
-      Anything but ok/active: --help-macos / --help-windows.
+      session: active = this process is in the GUI session and can inject
+      input and capture; bridge = this process was started by ssh and the
+      answer came through the GUI session's `gotto-hando --bridge` - runs
+      work; locked = lock screen, screen saver or UAC secure desktop;
+      inactive = not a GUI session (ssh-started, Windows session 0 or a
+      disconnected RDP session) and no bridge running: nothing can run.
+      Anything but ok/active/bridge: --help-macos / --help-windows.
   qdisp
       One line per display: idx, origin, size, scale, primary (OUTPUT).
   qmouse
@@ -421,25 +462,42 @@ has the fixed form "== NAME ==" so you can grep for it.
                        exit 2           exit 2      exit 3     exit 4   exit 1
 
   1. Parse every line into the IR. A syntax error reports line, column and
-     the source text (E_SYNTAX).
+     the source text (E_SYNTAX). This happens on the machine you invoke
+     gotto-hando on, also for a <dest>.
   2. Static validation (E_VALIDATE): value ranges and LIMITS; held balance
      (every ku/mu matches an earlier kd/md; c/md/drag on a button already
      held by md is rejected); one frame modifier; no % with r; chords of at
      most 8 keys including flags; [f] files exist, are UTF-8 and <= 64 KiB.
-     --check and --ir stop here and never connect.
-  3. Connect: local = in-process backend. Remote = GET /v1/info on the
-     profile's endpoint; failure = exit 3 (E_CONNECT).
-  4. Preflight on the target (failure = exit 4, nothing runs): permissions
-     (E_PERMISSION), session active and unlocked (E_SESSION), no key or
-     mouse button physically held down (E_INPUT), absolute and disp=
-     coordinates inside the desktop (E_BOUNDS), every key name supported on
-     that platform (E_INPUT).
+     --check and --ir stop here and never start ssh.
+  3. Connect: local from a GUI terminal = none (in-process backend). <dest>
+     = spawn `ssh <dest> <remote-bin> local ...` and wait for the remote
+     start line. The remote process prints it once it has parsed and
+     validated the text again (same result) and passed the --expect-version
+     check, BEFORE it connects to its bridge or preflights. ssh failure,
+     remote binary not found, a usage error or version mismatch from the
+     remote binary, or the remote process ending before that line = exit 3
+     (E_CONNECT). Being ssh-started, the remote process then hands the IR
+     to that machine's session bridge (--help-remote SESSION BRIDGE); no
+     bridge = abort E_SESSION after the start line (exit 4).
+  4. Preflight on the target (failure = abort, exit 4, nothing runs;
+     OUTPUT). Only what the run contains is checked: an unlocked GUI
+     session - the process's own, or a running bridge for an ssh-started
+     process - for every command except qinfo qdisp qmouse sleep set
+     (E_SESSION); permissions for the commands that need them - macOS
+     Accessibility for k kd ku txt m c md mu drag scroll paste win
+     open[wait=], macOS Screen Recording for cap; clip qclip exec open
+     need none (E_PERMISSION); no key or mouse button physically held down
+     (E_INPUT); absolute and disp= coordinates inside the desktop
+     (E_BOUNDS); every key name supported on that platform (E_INPUT). A
+     run of only qinfo qdisp qmouse sleep set and comments therefore never
+     fails the session or permission checks: qinfo reports them instead,
+     which is how you diagnose session=locked|inactive or perms=missing.
   5. Run the lines in order. After each line wait d= when given, otherwise
      the global delay (100ms) unless the command is query/sleep/set/cap/
      exec/open. Each result is streamed as soon as its line completes.
   6. End of run - normal, failed, deadline expired or interrupted (Ctrl-C,
-     connection loss): every held key/button is released in reverse order.
-     With --cap-on-error one extra capture is taken after a failure.
+     ssh connection loss): every held key/button is released in reverse
+     order. With --cap-on-error one extra capture is taken after a failure.
 
 == STATE MACHINE ==
   One invocation is one state machine; its lines share:
@@ -450,11 +508,12 @@ has the fixed form "== NAME ==" so you can grep for it.
     pointer position    owned by the OS; changed by m c md drag; read by
                         qmouse.
     delay/txtms/keyms   100ms / 0 / 30ms; changed by set. The initial delay
-                        is --delay, else the profile's delay, else 100ms.
-    capture counter and out directory   client side; advanced by cap.
-  Nothing persists between invocations and the server keeps no state.
+                        is --delay, else 100ms.
+    capture counter and out directory   local side; advanced by cap.
+  Nothing persists between invocations; no process (remote or bridge)
+  keeps state between runs.
   Held keys/buttons are released in reverse order when the run ends, fails,
-  times out or is interrupted (Ctrl-C, connection loss).
+  times out or is interrupted (Ctrl-C, ssh connection loss).
 
 == ERROR POLICY ==
   fail-fast (default): a failed line stops the run; later lines are
@@ -466,16 +525,18 @@ has the fixed form "== NAME ==" so you can grep for it.
   exec: exit != 0 is err E_EXEC (fail-fast) unless the line has noerr;
     E_TIMEOUT is never softened by noerr. -k relaxes every line, noerr
     relaxes its own line only.
-  Deadline: --timeout (300s) travels to the server as deadline_ms and is
-    enforced there too (local: in-process). On expiry the running line is
+  Deadline: --timeout (300s) is forwarded to the remote process and
+    enforced THERE (local: in-process). On expiry the running line is
     aborted (interpolated moves, capture bursts, win[wait=] polling and exec
     children are killed), held keys are released, that line is reported as
     err E_TIMEOUT, the rest as skip, and a normal done line follows: exit 1.
-  Connection loss: when the stream ends without done, or done has not
-    arrived within the deadline plus 5s grace, the client prints done with
-    state=unknown and exits 5. The server treats a dropped connection as a
-    cancel and releases held keys on its side. Run qinfo and cap before
-    sending more input.
+  Connection loss (<dest> only): when ssh exits or its output ends without
+    a done (or abort) line after the start line was seen, or done has not
+    arrived within the deadline plus 5s grace (the local side then kills
+    ssh), gotto-hando prints done with state=unknown and exits 5. The remote
+    process treats the loss of its ssh channel as a cancel, the bridge
+    aborts the run when that caller goes away, and held keys are released
+    there. Run qinfo and cap before sending more input.
   `ok` means the OS accepted the input; it does not prove the application
     reacted. Verify with cap.
 
@@ -506,6 +567,12 @@ has the fixed form "== NAME ==" so you can grep for it.
   Errors       <n> err <source>: <message> (<E_CODE>)
   Last line    done ok=N err=N skip=N elapsed=<ms>ms held_released=N
                [state=unknown]   (state=unknown only with exit 5)
+  Abort        the run stopped before any line executed (preflight failure,
+               bridge connection failure): stdout stays EMPTY - no out line,
+               no done line - and stderr gets one line
+                 abort: <message> (<E_CODE>)
+               exit 2 for E_VALIDATE (an option the target OS lacks), 3
+               for E_CONNECT, 4 for every other code.
   Multi-line results are indented two spaces with TAB-separated fields:
     qwin    <id>\t<pid>\t<app>\t<x>,<y> <w>x<h>\t<flags>\t<title>
             flags: * focused, min minimized, hidden
@@ -518,15 +585,16 @@ has the fixed form "== NAME ==" so you can grep for it.
             non-zero exit is still ok: read exit=N yourself.
     cap     <path> <w>x<h> origin=<x>,<y> scale=<f>
     win     id=<id> app=<app> matched=<N> <x>,<y> <w>x<h> "<title>"
-  Capture paths: <out>/<NNNN>-<label>-<UTC timestamp>.<fmt>; NNNN is the
+  Capture paths: <out>/<NNNN>-<label>-<UTC timestamp>.png; NNNN is the
   per-run counter, n>1 adds -00, -01, ... . <out> = --out, else
-  $GOTTO_HANDO_OUT, else the profile's out, else
-  $TMPDIR/gotto-hando/<profile>/<run-id>/. The directory is printed as the
-  first stdout line. A cap payload overrides the path for that capture.
+  $GOTTO_HANDO_OUT, else $TMPDIR/gotto-hando/<dest>/<run-id>/. Captures are
+  ALWAYS files on the local machine, also for a <dest>. The directory is
+  printed as the first stdout line. A cap payload overrides the path for
+  that capture.
 
 == JSONL ==
   --jsonl prints one JSON object per line. First:
-    {"event":"start","out":"<dir>","profile":"<name>","target":{"os":..}}
+    {"event":"start","out":"<dir>","dest":"<dest>","target":{"os":..}}
   then one object per input line, and last:
     {"event":"done","ok":N,"err":N,"skip":N,"elapsed_ms":N,
      "held_released":N[,"state":"unknown"]}
@@ -540,16 +608,90 @@ has the fixed form "== NAME ==" so you can grep for it.
      "code":"E_BOUNDS","msg":"coordinates outside current window"}
   Capture bursts report each frame's scheduled and actual time and the
   slippage between them.
+  When the run stops before any line executed (preflight failure, bridge
+  connection failure) the start object is followed by
+    {"event":"abort","code":"E_...","msg":"..."}
+  and no done object (exit 2 for E_VALIDATE, 3 for E_CONNECT, else 4).
+  --request-perms
+  prints the start object, then
+    {"event":"perms","accessibility":"ok|missing","screen":"ok|missing"}
+  and no done object.
+  With --inline-captures (what the <dest> wrapper asks the remote process
+  for) a capture object has no "path"; it carries "fmt":"png" and
+  "data":"<base64 of the file>" instead. qclip[f] likewise returns "text"
+  and no path. The local side decodes these into files, so what YOU see for
+  a <dest> is the normal form above with local paths.
+
+== IR JSON ==
+  --ir prints the parsed and validated sequence as one JSON document and
+  exits (no ssh, no preflight). The same IR, plus a "run" object with the
+  run options, is what the session bridge receives (--help-remote SESSION
+  BRIDGE).
+    {
+      "v": 1,
+      "ops": [
+        {"line": 1, "src": "win[]Blender", "op": "focus",
+         "selector": {"kind": "title", "value": "Blender", "regex": false},
+         "wait_ms": 0},
+        {"line": 2, "src": "k[c]v", "op": "key", "mods": ["ctrl"],
+         "keys": [["v"]], "repeat": 1, "gap_ms": 30},
+        {"line": 3, "src": "txt[ms=66]hello, world!", "op": "text",
+         "text": "hello, world!", "interval_ms": 66},
+        {"line": 4, "src": "m[]1024,133", "op": "move",
+         "point": {"frame": "desktop", "x": 1024, "y": 133},
+         "duration_ms": 0},
+        {"line": 5, "src": "c[n=2,w]50%,50%", "op": "click",
+         "button": "left", "count": 2, "gap_ms": 60, "mods": [],
+         "point": {"frame": "window", "x": 50, "y": 50,
+                   "x_pct": true, "y_pct": true}},
+        {"line": 6, "src": "cap[n=2,ms=100,label=after]", "op": "capture",
+         "frame": "desktop", "scale": 1.0, "format": "png",
+         "count": 2, "interval_ms": 100, "label": "after"},
+        {"line": 7, "src": "exec[]git status", "op": "exec",
+         "argv": ["git", "status"], "shell": false, "noerr": false,
+         "timeout_ms": 10000},
+        {"line": 8, "src": "exec[shell]dir /b", "op": "exec",
+         "shell": true, "cmd": "dir /b", "noerr": false,
+         "timeout_ms": 10000},
+        {"line": 9, "src": "open[]Blender", "op": "open",
+         "target": "Blender", "wait_ms": 0}
+      ],
+      "defaults": {"delay_ms": 100, "text_interval_ms": 0, "key_gap_ms": 30}
+    }
+    - Every op keeps "line" and "src" for error reporting.
+    - "keys" is a list of chords: k[]ctrl+shift+a b ->
+      [["ctrl","shift","a"],["b"]].
+    - "mods" and modifier key names are symbols (ctrl shift alt meta
+      primary); the executing backend maps them to OS key codes, so the IR
+      is built before the target OS is known.
+    - [f] file contents are inlined ("text" carries them); the executing
+      process reads no files of yours.
+    - Capture ops carry label, frame, scale, format, count and interval but
+      NO output path; qclip[f] carries no path either. Paths are a local
+      concern.
+    - exec argv splitting is done by the parser (platform-independent
+      rule); "noerr" is interpreted by the engine, the backend just
+      returns the exit code.
+    - "v" is the IR schema version. The <dest> wrapper refuses another
+      gotto-hando version up front (--expect-version, exit 3); the bridge
+      checks "v" again and rejects a mismatch (abort E_CONNECT, exit 3).
+      Run the same version on both machines.
 
 == ERROR CODES ==
   Printed as (<E_CODE>) at the end of err lines and as "code" in JSONL.
   E_SYNTAX      malformed line (exit 2)
   E_VALIDATE    static validation failed: range, held balance, limits,
-                [f] file (exit 2)
-  E_CONNECT     unknown profile, host not loopback, tunnel or server down,
-                token rejected, version mismatch (exit 3)
-  E_PERMISSION  macOS Accessibility / Screen Recording missing (exit 4)
-  E_SESSION     session locked or not a GUI session (exit 4)
+                [f] file; through a <dest> also an option the target OS
+                lacks, as abort (exit 2)
+  E_CONNECT     destination failure: ssh could not connect or was refused,
+                the remote binary was not found or is another version
+                (--expect-version), the remote process ended before its
+                start line, or the bridge rejected the IR version (exit 3)
+  E_PERMISSION  macOS Accessibility / Screen Recording missing for a
+                command that needs it (EXECUTION step 4) (exit 4)
+  E_SESSION     the run needs a GUI session (EXECUTION step 4) but it is
+                locked, or the process is not in one (ssh-started) and no
+                bridge is running there (exit 4)
   E_BOUNDS      coordinate outside its frame (preflight: exit 4; r/w/% at
                 run time: that line fails)
   E_NOWINDOW    win or open[wait=] found no window, or the OS refused to
@@ -567,15 +709,23 @@ has the fixed form "== NAME ==" so you can grep for it.
   0  every line ok
   1  one or more lines failed at run time (some input was executed;
      includes --timeout expiry: E_TIMEOUT, held keys released)
-  2  syntax/validation error, or -f mixed with [line ...] (nothing ran)
-  3  profile/connection error (nothing ran)
+  2  syntax/validation error, -f mixed with [line ...], or an option the
+     platform does not support (nothing ran; from a <dest> as abort
+     E_VALIDATE)
+  3  destination failure: ssh could not connect, the remote binary was not
+     found (`command not found`, wrong --remote-bin) or is another version
+     (--expect-version), or the remote process exited before printing its
+     start line (nothing ran)
   4  preflight failed: permission, session, physically held key, absolute
-     coordinate bounds, key support (nothing ran)
-  5  state unknown: connection lost mid-run; held keys may still be down
+     coordinate bounds, key support (nothing ran; reported as abort, OUTPUT)
+  5  state unknown: the ssh connection was lost mid-run, after the remote
+     process had started; held keys may still be down
 
 == LIMITS ==
   lines per run          1000
-  line length            64 KiB; an [f] file is a separate 64 KiB
+  line length            64 KiB; an [f] file is a separate 64 KiB (for a
+                         <dest> the line with the contents inlined in
+                         escaped form must itself fit 64 KiB)
   k keys                 64 sequential; 8 per chord including flags
   scroll ticks           1..50
   sleep                  <= 60s
@@ -588,7 +738,8 @@ has the fixed form "== NAME ==" so you can grep for it.
   label=                 [A-Za-z0-9][A-Za-z0-9_-]{0,47}
   cap n=                 <= 120; at most 121 captures per run
   scale=                 0.1..4.0 or native
-  --timeout              default 300s, enforced by client and server
+  --timeout              default 300s, enforced by the executing process;
+                         the local side kills ssh at deadline + 5s
   argv                   OS limit (Windows 32K characters, macOS 1 MiB);
                          use [f] for large paste payloads
 
@@ -616,13 +767,14 @@ has the fixed form "== NAME ==" so you can grep for it.
           platform blocks synthetic input (macOS Secure Input). Elevated
           Windows apps ignore input SILENTLY (ok, no effect): see
           --help-windows. Platform details: --help-macos, --help-windows.
-  CAVEAT: exec runs with the server account's privileges - the same power
-          as that account's shell (--help-remote). There is no allowlist.
-          exec[shell] uses the login shell, so PATH is usually complete; if
-          a command is still not found use an absolute path.
+  CAVEAT: exec runs with the privileges of the account running gotto-hando
+          on the target - the same power as that account's shell
+          (--help-remote). There is no allowlist. exec[shell] uses the
+          login shell, so PATH is usually complete; if a command is still
+          not found use an absolute path.
   CAVEAT: Frame bursts (cap[n=]) are best effort; the first frame may be
           late. Each frame reports its actual time and slippage in --jsonl.
-  CAVEAT: If the run ends with exit 5 (connection lost), held keys may
+  CAVEAT: If the run ends with exit 5 (ssh connection lost), held keys may
           still be down on the target. Run `qinfo` and `cap` before sending
           more input.
   CAVEAT: exit 4 before anything ran means the TARGET is not ready
@@ -648,17 +800,58 @@ has the fixed form "== NAME ==" so you can grep for it.
   Windows cmd.exe has no single quotes; PowerShell re-quotes argv. On
   Windows prefer -f FILE or stdin. Large paste payloads must use [f]
   (argv limits: Windows 32K characters, macOS 1 MiB).
+  Only the LOCAL shell matters, also for a <dest>: the sequence is sent to
+  the remote process on its stdin, never through the remote shell.
 
-== PROFILES ==
-  <profile> names a target PC. `local` is built in and cannot be redefined.
-  Others are read from ~/.config/gotto-hando/profiles.toml (macOS/Linux;
-  $XDG_CONFIG_HOME honored) or %APPDATA%\gotto-hando\profiles.toml
-  (Windows). Profile names match [a-z0-9][a-z0-9_-]*. A profile's host must
-  be loopback. `gotto-hando --profiles` prints the file path and the
-  entries. Unknown profile = exit 3.
-  The file format and how to set up a remote PC are in --help-remote.
+== DESTINATIONS ==
+  <dest> names the machine to drive.
+    local        this machine. Invoked from a GUI terminal: in-process, no
+                 ssh, no bridge, on any platform. Invoked by ssh
+                 (SSH_CONNECTION or SSH_TTY set; this is what a <dest> run
+                 does on the far side): hands the run to this machine's
+                 bridge.
+    <anything else>
+                 an ssh destination exactly as `ssh` accepts it: `host`,
+                 `user@host`, or a Host alias from ~/.ssh/config. Keys,
+                 users, ports, jump hosts and options all live in ssh
+                 config; gotto-hando adds no configuration file of its own.
+  What happens for a <dest>: gotto-hando parses and validates locally
+  (exit 2 sends nothing), reads [f] files locally and inlines them into
+  the text (qclip[f] is sent as qclip[] and saved locally), then runs
+    ssh <dest> <remote-bin> local --jsonl --inline-captures \
+        --expect-version <local version> <fwd opts> -f -
+  feeds the sequence to its stdin, reads the remote JSONL from its stdout,
+  prints it in your chosen format (plain or --jsonl) and writes captures
+  and qclip[f] files LOCALLY under --out. On the far side `local` hands the
+  run to that machine's `gotto-hando --bridge`, which the user must have
+  started in the GUI session; the remote machine never stores your
+  sequence or images. <remote-bin> is --remote-bin (default
+  `gotto-hando`). Forwarded options: OPTIONS.
+  Requirements on <dest>: gotto-hando of the same version (a mismatch is
+  exit 3, nothing sent to its bridge) on the remote PATH as sshd sees it
+  (or --remote-bin); sshd reachable with non-
+  interactive auth (keys/agent; a password prompt from ssh appears on your
+  terminal as usual); the user logged on to the GUI session with
+  `gotto-hando --bridge` running there (macOS additionally: permissions
+  granted to the bridge, --help-macos; Windows: --help-windows).
+    ~/.ssh/config
+      Host winbox
+        HostName 192.168.1.20
+        User me
+      Host mac
+        HostName mac.local
+        User me
+    gotto-hando winbox qinfo   # ... session=bridge perms=n/a elevated=0
+    gotto-hando mac qinfo      # ... session=bridge perms=accessibility:ok,..
+    gotto-hando winbox 'win[]Blender' 'k[]a' 'cap'   # PNG on THIS machine
+  Failure of ssh itself, a missing or mismatched remote binary, or the
+  remote process ending before its start line = exit 3 and nothing ran;
+  ssh's own message is on stderr. No bridge on the far side = abort
+  E_SESSION, exit 4, nothing ran. Setup, the bridge and troubleshooting:
+  --help-remote.
 
 == EXAMPLES ==
+  # winbox and mac below are Host aliases in ~/.ssh/config (DESTINATIONS)
   # Focus Blender, select all, numeric transform via individual keys
   # (Unicode text is ignored by Blender)
   gotto-hando winbox 'win[]Blender' 'k[]a' 'k[]g' 'k[]x' 'k[]1 period 5' \
@@ -671,7 +864,7 @@ has the fixed form "== NAME ==" so you can grep for it.
                      'cap[n=3,ms=100,label=orbit]'
   # Shift-click two items, right-click, screenshot the window only
   gotto-hando local 'win[]Finder' 'c[w]120,200' 'c[ws]120,240' \
-                    'c[w,b=right]120,240' 'cap[w,scale=0.5,fmt=jpg]'
+                    'c[w,b=right]120,240' 'cap[w,scale=0.5]'
   # Relative nudge, hover, region capture
   gotto-hando local 'm[r]0,-40' 'sleep[]300' 'cap[rect=0:0:600:400]'
   # Scroll two pages down at a position
@@ -694,15 +887,18 @@ has the fixed form "== NAME ==" so you can grep for it.
   gotto-hando local --check -f steps.gh
 
 == SEE ALSO ==
-  --help-macos     when `qinfo` shows perms=...:missing or session!=active
-                   on a Mac, after rebuilding on macOS, or before running
-                   --serve on a Mac. Signing identity, TCC permissions,
-                   --request-perms, LaunchAgent, Retina.
-  --help-windows   when `qinfo` shows session!=active on Windows, input is
-                   silently ignored by an elevated app, or before running
-                   --serve on Windows. Interactive session, Task Scheduler,
+  --help-macos     when `qinfo` shows perms=...:missing or session
+                   locked/inactive on a Mac, after rebuilding on macOS, or
+                   before driving a Mac over ssh (the --bridge LaunchAgent).
+                   Signing identity, TCC permissions, --request-perms,
+                   session bridge, Retina.
+  --help-windows   when `qinfo` shows session locked/inactive on Windows,
+                   input is silently ignored by an elevated app, or before
+                   driving a Windows PC over ssh (the --bridge task).
+                   Interactive session, session bridge, Task Scheduler,
                    SmartScreen, UAC/UIPI, DPI, cmd /C and code pages.
   --help-remote    to control a PC other than `local`, or on exit 3
-                   (E_CONNECT). Server --serve/--token, ssh -L tunnel,
-                   profiles.toml, verification, the security model, the
-                   wire protocol.
+                   (E_CONNECT) / exit 4 (E_SESSION) from a <dest>. The ssh
+                   wrapper, the security model, the session bridge and its
+                   protocol, remote install and PATH, --remote-bin,
+                   quoting, troubleshooting.

@@ -1,11 +1,11 @@
-gotto-hando --help-windows - Windows: interactive session, Task Scheduler,
-SmartScreen, UAC/UIPI, DPI, cmd /C and code pages.
+gotto-hando --help-windows - Windows: interactive session, session bridge
+(Task Scheduler), SmartScreen, UAC/UIPI, DPI, cmd /C and code pages.
 
 == WHEN YOU NEED THIS ==
   `gotto-hando local qinfo` shows session=locked|inactive; a run exited 4
   with E_SESSION; input is accepted (ok) but an elevated app does not
-  react; you are about to run `gotto-hando --serve` on a Windows PC; exec
-  output looks like mojibake.
+  react; you are about to drive a Windows PC over ssh (`gotto-hando
+  --bridge` must run there); exec output looks like mojibake.
 
 == CHECK ==
   $ gotto-hando local qinfo
@@ -14,23 +14,33 @@ SmartScreen, UAC/UIPI, DPI, cmd /C and code pages.
   (one line in reality; wrapped here)
   session=active    this process is in the active console session and the
                     input desktop is "Default": input and capture work.
+  session=bridge    this process was started by ssh (or is outside the
+                    console session) and the answer came through the
+                    logged-on session's `gotto-hando --bridge`: runs work.
   session=locked    the input desktop is Winlogon: lock screen, UAC secure
                     desktop, Ctrl+Alt+Del screen. Unlock / dismiss.
-  session=inactive  not the active console session: a service (session 0),
-                    a disconnected RDP session, another user's session.
+  session=inactive  not the active console session (a service / session 0,
+                    an ssh shell, a disconnected RDP session, another
+                    user's session) AND no bridge is running: nothing can
+                    run (E_SESSION).
   perms=n/a         Windows has no permission dialogs for input/capture.
-                    Nothing to grant. `--request-perms` is exit 2 locally
-                    and a no-op (exit 0) against a Windows server.
-  elevated=0|1      whether gotto-hando runs as Administrator (matters for
-                    UIPI, below).
-  Preflight also rejects a run while a modifier key or mouse button is
-  physically held down (GetAsyncKeyState): release it and retry.
+                    Nothing to grant. `--request-perms` is exit 2 on
+                    Windows, locally (usage error) and through a <dest>
+                    (abort E_VALIDATE after the start object).
+  elevated=0|1      whether the answering process (the bridge, when
+                    session=bridge) runs as Administrator (UIPI, below).
+  Preflight also rejects a run while a key or mouse button is physically
+  held down (GetAsyncKeyState over every virtual key): release it and
+  retry (E_INPUT, exit 4). Preflight checks only what the run contains: a
+  run of only qinfo qdisp qmouse sleep set and comments never fails the
+  session check (it reports session=); every other command needs the
+  active, unlocked session or the bridge (help.txt EXECUTION step 4).
 
 == INTERACTIVE SESSION REQUIRED ==
   SendInput and screen capture only work from a process inside the
   logged-on user's interactive desktop.
-    - NOT a Windows service / session 0 (always E_SESSION). Do not wrap
-      --serve in a service (sc.exe, NSSM, srvany).
+    - NOT a Windows service / session 0 (always E_SESSION). Do not wrap the
+      bridge in a service (sc.exe, NSSM, srvany).
     - NOT a locked desktop: the lock screen, a screen saver with password,
       or a UAC prompt switch the input desktop to Winlogon
       (session=locked). Disable automatic lock while driving: Settings >
@@ -45,14 +55,30 @@ SmartScreen, UAC/UIPI, DPI, cmd /C and code pages.
       Then keep the console unlocked (settings above). A headless PC
       without a monitor may need a dummy HDMI/DP plug so that a display
       exists to capture (otherwise cap fails with E_CAPTURE).
-    - SSH (OpenSSH Server) shells are session-0-like: `gotto-hando --serve`
-      started from an SSH shell reports session=inactive. Use Task
-      Scheduler (below) so the server lives in the interactive session;
-      use SSH only for the tunnel.
+    - SSH (OpenSSH Server) shells are session 0: a `gotto-hando local`
+      started over ssh cannot drive the desktop itself and hands the run
+      to the bridge (next section). That is the ONLY way a <dest> run
+      reaches a Windows desktop.
 
-== KEEPING --serve RUNNING (TASK SCHEDULER) ==
-  Run the server as a normal process of the logged-on user, started at
-  logon:
+== SESSION BRIDGE FOR SSH (TASK SCHEDULER) ==
+  Why: every `gotto-hando <dest> ...` becomes `ssh <dest> gotto-hando
+  local ...` on this PC, and sshd starts it in session 0. Such a process
+  detects that it is remote (SSH_CONNECTION / SSH_TTY set, or its session
+  id != WTSGetActiveConsoleSessionId, or WinSta0 not accessible) and
+  forwards the IR over a named pipe to `gotto-hando --bridge`, a normal
+  process of the logged-on user that does the actual preflight, input and
+  capture. Without a running bridge the run fails in preflight with
+  E_SESSION (exit 4) and the hint "start `gotto-hando --bridge` in the
+  logged-on GUI session". Running the bridge is therefore the user's
+  consent to remote control, and quitting it (End task, Ctrl-C) is the kill
+  switch. The pipe \\.\pipe\gotto-hando-<username> has an ACL for the
+  current user only and is not reachable from the network; protocol
+  details are in --help-remote SESSION BRIDGE.
+  A `gotto-hando local` typed into a terminal window on this PC never uses
+  the bridge, whether or not one is running.
+  Start it for a quick test from any window in the logged-on session:
+    gotto-hando --bridge
+  Register it to start at logon (recommended):
     GUI: Task Scheduler > Create Task
       General:    "Run only when user is logged on"  (REQUIRED - "whether
                   user is logged on or not" has no interactive desktop)
@@ -60,22 +86,28 @@ SmartScreen, UAC/UIPI, DPI, cmd /C and code pages.
                   elevated apps (UIPI, below)
       Triggers:   At log on - specific user
       Actions:    Start a program: C:\tools\gotto-hando.exe
-                  Arguments: --serve 47311 --token s3cr3t --detach
+                  Arguments: --bridge
       Conditions: uncheck "Start the task only if the computer is on AC
                   power"
       Settings:   uncheck "Stop the task if it runs longer than";
                   "If the task is already running: Do not start a new
                   instance"
     Command line equivalent (interactive-only task for the current user):
-      schtasks /Create /TN gotto-hando /SC ONLOGON /RL LIMITED /F ^
-        /TR "\"C:\tools\gotto-hando.exe\" --serve 47311 --token s3cr3t --detach"
-      schtasks /Run /TN gotto-hando      # start now without logging off
-      (use /RL HIGHEST from an elevated prompt for an elevated server)
-  --detach frees the console (FreeConsole) and writes the log to
-  %LOCALAPPDATA%\gotto-hando\serve.log, so no window stays open. It is the
-  same binary; there is no separate windowsgui build.
+      schtasks /Create /TN gotto-hando-bridge /SC ONLOGON /RL LIMITED /F ^
+        /TR "\"C:\tools\gotto-hando.exe\" --bridge"
+      schtasks /Run /TN gotto-hando-bridge   # start now without logging off
+      schtasks /End /TN gotto-hando-bridge   # kill switch
+      (use /RL HIGHEST from an elevated prompt for an elevated bridge)
+  When started without a console (Task Scheduler) the bridge shows no
+  window; started from a terminal it stays in the foreground until Ctrl-C.
+  It logs one line per run and error to
+  %LOCALAPPDATA%\gotto-hando\bridge.log (no sequence contents, no images)
+  and writes nothing else to disk. A second bridge for the same user exits
+  2. It is the same binary; there is no separate windowsgui build.
   A startup-folder shortcut (shell:startup) also works but cannot be
   elevated without a UAC prompt at every logon.
+  Verify from the controlling machine:
+    gotto-hando <dest> qinfo     -> session=bridge perms=n/a elevated=0|1
 
 == SMARTSCREEN AND DEFENDER ==
   A binary downloaded with a browser carries the Mark-of-the-Web; on first
@@ -97,9 +129,10 @@ SmartScreen, UAC/UIPI, DPI, cmd /C and code pages.
   Apps running as Administrator ignore SendInput from a non-elevated
   process (UIPI). The OS reports success, so gotto-hando prints `ok` and
   the app does nothing; this cannot be detected. Check `qinfo` elevated=;
-  to drive elevated apps run the server elevated (Task Scheduler "Run with
-  highest privileges" / `schtasks /RL HIGHEST`). An elevated server can
-  drive both kinds.
+  to drive elevated apps run the executing process elevated: an elevated
+  terminal for `local`, an elevated bridge for ssh (Task Scheduler "Run
+  with highest privileges" / `schtasks /RL HIGHEST`). An elevated process
+  can drive both kinds.
 
 == DPI AND COORDINATES ==
   Coordinates are physical pixels. gotto-hando declares Per-Monitor-V2 DPI
@@ -130,12 +163,12 @@ SmartScreen, UAC/UIPI, DPI, cmd /C and code pages.
   Output encoding: cmd and many console programs write the OEM code page
   (CP437, CP949, ...). gotto-hando decodes stdout/stderr with the console
   output code page (GetConsoleOutputCP; the ANSI code page GetACP when the
-  server has no console, e.g. --detach) and delivers UTF-8. Undecodable
-  bytes become U+FFFD. gotto-hando never forces chcp 65001 itself. If a
-  program prints UTF-8 while the console is CP949, switch the code page in
-  the same command:
+  executing process has no console, e.g. a Task Scheduler-started bridge)
+  and delivers UTF-8. Undecodable bytes become U+FFFD. gotto-hando never
+  forces chcp 65001 itself. If a program prints UTF-8 while the console is
+  CP949, switch the code page in the same command:
     exec[shell]chcp 65001 >nul && type file.txt
-  PATH: a Task Scheduler-started server has the user's normal PATH (unlike
+  PATH: a Task Scheduler-started bridge has the user's normal PATH (unlike
   macOS launchd). Absolute paths are still safest.
   Paths with spaces:
     exec[]"C:\Program Files\Blender\blender.exe" --version
@@ -159,3 +192,7 @@ SmartScreen, UAC/UIPI, DPI, cmd /C and code pages.
           may not honour synthetic input; verify with cap.
   CAVEAT: txt sends UTF-16 units (surrogate pairs in order); a per-
           character ms= gap applies per Unicode character.
+  CAVEAT: The bridge runs with the privileges of the logged-on user (or
+          Administrator when registered with highest privileges). exec via
+          a <dest> runs with exactly those privileges; there is no
+          allowlist (--help-remote SECURITY MODEL).

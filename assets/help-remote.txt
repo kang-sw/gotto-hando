@@ -1,210 +1,266 @@
-gotto-hando --help-remote - control another PC: server, SSH tunnel,
-profile, wire protocol.
+gotto-hando --help-remote - control another PC over ssh: the <dest>
+wrapper, the session bridge, remote setup, quoting, troubleshooting.
 
 == WHEN YOU NEED THIS ==
-  You want to drive a PC other than `local`; a run exited 3 (E_CONNECT /
-  unknown profile); `--profiles` shows nothing.
+  You want to drive a PC other than `local`; a run exited 3 (E_CONNECT);
+  `gotto-hando <dest> qinfo` shows session=inactive (bridge not running) or
+  perms=...:missing while the same command works in a terminal on that
+  machine.
 
 == SECURITY MODEL (READ FIRST) ==
-  The server (`gotto-hando --serve`) binds 127.0.0.1 ONLY. There is no
-  --bind option, and the client refuses profiles whose host is not
-  loopback (exit 3). The only supported path to a remote server is an SSH
-  tunnel; LAN/VPN access without a tunnel is not supported.
-  The server = that account's shell. exec and open run arbitrary commands
-  as the logged-in user, so whoever can reach the port can do anything
-  that user can. This adds no power beyond the SSH account you already
-  need for the tunnel - but it means: never forward the port beyond
-  localhost, and on a host with other local users always start the server
-  with --token and put the same token in the profile. There is no command
-  allowlist.
-  The server keeps no state and writes nothing to disk except its log
-  (child processes started by exec/open are the user's own business);
-  captures and exec output travel back over the tunnel and are stored on
-  the CLIENT.
-  The server runs one run at a time and cancels it - releasing held keys
-  and killing exec children - when the client disconnects.
+  gotto-hando opens NO network listener, on either side, ever. There is no
+  server mode, no port, no token and no configuration file of its own. A
+  <dest> is simply a machine you can already `ssh` into: gotto-hando runs
+  `ssh <dest> ...` and talks to the remote copy of itself over ssh's stdin/
+  stdout. Authentication, encryption, host keys, jump hosts and port
+  forwarding are sshd's and your ssh config's business.
+  Two things must therefore be true before a remote desktop can be driven:
+    1. sshd lets you run commands as that account. exec and open run
+       arbitrary commands as that account, which adds nothing: you already
+       have that account's shell. There is no command allowlist (there is
+       none in ssh either).
+    2. That account has started `gotto-hando --bridge` inside its GUI
+       session (SESSION BRIDGE). A running bridge IS the user's consent to
+       remote desktop control; quitting it is the kill switch - every
+       ssh-started run then fails in preflight (E_SESSION) and nothing is
+       injected. The bridge listens on a unix socket / named pipe local to
+       that machine, mode 0600 / current-user ACL: no network, no other
+       user.
+  Nothing of yours is stored on the remote machine: the sequence arrives on
+  stdin, captures and exec output go back on stdout, and files are written
+  only on YOUR machine. Neither the remote process nor the bridge keeps
+  state between runs.
 
-== SERVER SIDE (the PC to control) ==
-  1. Install: copy gotto-hando to the PATH; `gotto-hando --version`.
-  2. Prepare the platform (permissions, session, autostart):
-       macOS   -> gotto-hando --help-macos
-                  (stable signing identity, Accessibility + Screen
-                  Recording, LaunchAgent)
-       Windows -> gotto-hando --help-windows
-                  (interactive logon session, Task Scheduler, UIPI)
-     Check on the machine:
-       gotto-hando local --ping   -> session=active, perms all ok / n/a.
-  3. Start the server INSIDE the GUI login session (Terminal window,
-     LaunchAgent, or Task Scheduler; NOT an SSH shell, NOT a service):
-       gotto-hando --serve 47311 --token s3cr3t
-     Pick any free port; the token is any secret string. One server per
-     port; it accepts one run at a time (a second client gets HTTP 409).
-  4. Enable SSH on the server PC: macOS System Settings > General >
+== HOW IT WORKS ==
+  1. Locally: parse and validate the whole sequence (a syntax or validation
+     error is exit 2 and nothing is sent), read every [f] file HERE and
+     rewrite the sequence text before sending: txt[f]/paste[f]/clip[f]
+     become txt[]/paste[]/clip[] with the file's contents inlined in TEXT
+     ESCAPES form (\n \t \\ \uXXXX); qclip[f]<path> becomes qclip[] and its
+     result is written to the local <path> afterwards. The rewritten line
+     is validated again against the 64 KiB line limit like any other line
+     (E_VALIDATE, exit 2, nothing sent). The remote side receives plain
+     sequence text and reads no file of yours.
+  2. Spawn
+       ssh <dest> <remote-bin> local --jsonl --inline-captures \
+           --expect-version <local version> [-q] [--delay D] \
+           [--timeout D] [-k] [--cap-on-error] [--request-perms] -f -
+     <remote-bin> = --remote-bin (default `gotto-hando`). Nothing else is
+     put on the remote command line; the sequence goes to the remote
+     process's stdin, so no remote shell ever sees your lines (QUOTING).
+  3. The remote process parses and validates the text again, checks its
+     version against --expect-version (mismatch: stderr `version mismatch:
+     remote <x>, expected <y>`, exit 3, nothing else printed) and prints
+     the JSONL start object. Only then it notices that it was started by
+     ssh (SSH_CONNECTION / SSH_TTY in its environment) and hands the IR to
+     that machine's session bridge, which preflights and runs it inside
+     the GUI session. Results stream back as JSONL on stdout: one object
+     per line, then a done object. Captures and qclip results are inline
+     as base64/text (--inline-captures, help.txt JSONL). No bridge running,
+     or preflight failing: the start object is followed by
+       {"event":"abort","code":"E_...","msg":"..."}
+     and no done object; nothing ran (E_CONNECT = exit 3, every other
+     code, E_SESSION included, = exit 4).
+  4. Locally: wait for the start object (until then any failure - ssh,
+     binary not found, usage error or version mismatch from the remote
+     binary - is exit 3 and nothing ran), then print each object in your
+     format (plain or --jsonl), decode captures into files under --out (or
+     $GOTTO_HANDO_OUT, or $TMPDIR/gotto-hando/<dest>/<run-id>/) and rewrite
+     the capture lines to show those local paths. Two more rewrites keep
+     the output identical to a local run: the start object's "out" and
+     "dest" become the local directory and your destination name, and
+     err lines show the line as YOU wrote it (`paste[f]./cmd.py`, not the
+     inlined text), taken from the local parse by line number. An abort
+     object is relayed in your format (plain: nothing on stdout, one
+     stderr line `abort: <message> (<E_CODE>)`) and exits with its code's
+     exit code (E_VALIDATE 2, E_CONNECT 3, else 4); the remote process's
+     own exit status is diagnostic only. Otherwise the exit code is
+     computed from the done object exactly as for local.
+  Ctrl-C locally ends the ssh session; the remote process treats the lost
+  channel as a cancel, the bridge aborts the run when its caller goes away,
+  and held keys are released. --timeout is enforced by the bridge (err
+  E_TIMEOUT, normal done, exit 1); the local side additionally kills ssh at
+  deadline + 5s and exits 5 if no done arrived (help.txt ERROR POLICY).
+  Round trip: ssh connection setup (typically 0.2-1s on a LAN with keys)
+  plus the run. Use `ControlMaster auto` / `ControlPersist` in ssh config
+  to reuse one connection across invocations.
+  Both machines must run the same gotto-hando version: the wrapper passes
+  --expect-version and a mismatching remote exits 3 before its start
+  line; the bridge checks the IR schema version "v" again and answers a
+  mismatch with abort E_CONNECT (exit 3).
+  Files other than text: [f] carries UTF-8 text of at most 64 KiB and
+  nothing else; there is no upload command. Move images, binaries or large
+  files with scp/sftp to the SAME destination (`scp ./shot.png
+  <dest>:/tmp/`), then consume them there with open[]<remote path> or
+  exec[] (e.g. a script that puts the file on that machine's clipboard).
+  Files coming back are cap and qclip[f] (inline, written locally); for
+  anything else use scp the other way.
+
+== SESSION BRIDGE ==
+  `gotto-hando --bridge` is the same binary, started by the user INSIDE the
+  GUI session (a terminal window, a LaunchAgent, a Task Scheduler logon
+  task) and left running. It exists for three reasons:
+    - consent and kill switch: remote control works only while the user
+      runs it (SECURITY MODEL);
+    - Windows: an ssh-started process is in Session 0 and cannot touch the
+      interactive desktop at all;
+    - macOS: TCC permissions belong to a process in the GUI session; the
+      bridge is that process, so prompts can appear and grants stick.
+  Detection: `gotto-hando local` hands its run to the bridge when
+  SSH_CONNECTION or SSH_TTY is set in its environment (any platform), and
+  on Windows also when its session is not the active console session or
+  WinSta0 is not accessible. Started from a GUI terminal on the machine
+  itself it never uses the bridge, on any platform, whether or not one is
+  running. This detection is a routing convenience, not the security
+  boundary: a process that scrubs those variables and runs in-process
+  simply fails preflight (macOS: no TCC grant for a non-GUI process;
+  Windows: Session 0) with abort E_SESSION, and nothing is injected.
+  Endpoint (same machine, same user only):
+    macOS    unix socket $HOME/Library/Application Support/gotto-hando/
+             bridge.sock (file 0600, directory 0700)
+    Windows  named pipe \\.\pipe\gotto-hando-<username> (ACL: current user)
+  Protocol: the caller writes ONE IR JSON document (help.txt IR JSON) with
+  an extra top-level "run" object {"deadline_ms":N,"keep_going":b,
+  "quiet":b,"cap_on_error":b} - or {"v":1,"request_perms":true} for
+  --request-perms - then half-closes; the bridge answers with the same
+  JSONL it would print on stdout with --inline-captures, ending with the
+  done object - or the perms object
+  {"event":"perms","accessibility":"ok|missing","screen":"ok|missing"} for
+  --request-perms, or an abort object when preflight fails or the IR "v"
+  is not the bridge's (abort E_CONNECT) - and closes. One run at a time: a
+  second caller waits until the first run has finished. The caller
+  disconnecting aborts the run and releases held keys.
+  Log: macOS ~/Library/Logs/gotto-hando/bridge.log, Windows
+  %LOCALAPPDATA%\gotto-hando\bridge.log (one line per run and error; no
+  sequence contents, no images). The bridge writes nothing else to disk.
+  qinfo answered through the bridge reports session=bridge. Registering
+  the bridge so it survives reboots: --help-macos "SESSION BRIDGE FOR SSH
+  (REMOTE MAC)", --help-windows "SESSION BRIDGE FOR SSH (TASK SCHEDULER)".
+
+== REMOTE SETUP: COMMON ==
+  1. Install the same gotto-hando version on the remote PC and put it on
+     the PATH THAT SSHD USES. Non-interactive ssh commands do not get your
+     interactive PATH: macOS gives /usr/bin:/bin:/usr/sbin:/sbin plus what
+     ~/.zshenv adds (not ~/.zprofile / ~/.zshrc); Windows OpenSSH uses the
+     account's system+user PATH. Check from your machine:
+       ssh <dest> gotto-hando --version
+     If that says "command not found", either add the directory in a file
+     ssh does read (~/.zshenv on macOS) or pass the path every time:
+       gotto-hando <dest> --remote-bin /usr/local/bin/gotto-hando qinfo
+  2. Enable sshd on the remote PC: macOS System Settings > General >
      Sharing > Remote Login; Windows Settings > Apps > Optional features >
-     OpenSSH Server (service "sshd", automatic). Prefer key-based auth.
-  5. Verify locally on the server PC:
-       curl -s -H 'Authorization: Bearer s3cr3t' http://127.0.0.1:47311/v1/info
+     OpenSSH Server (service "sshd", startup type automatic). Use keys or
+     an agent so that `ssh <dest> true` needs no typing.
+  3. Log on to the GUI session on the remote PC, keep it unlocked (a lock
+     screen is session=locked, exit 4), and start the bridge there:
+       gotto-hando --bridge
+     Leave that terminal open, or register it to start at logon (platform
+     texts). Quit it whenever remote control should be impossible.
+  4. Platform step, then verify from your machine:
+       gotto-hando <dest> qinfo
+     macOS   -> session=bridge perms=accessibility:ok,screen:ok
+     Windows -> session=bridge perms=n/a
+  5. Drive it exactly like local; captures land on your machine:
+       gotto-hando <dest> 'win[]Blender' 'k[]a' 'cap'
 
-== CLIENT SIDE (where the agent runs) ==
-  1. Open the tunnel (keep it running; autossh or a systemd/launchd user
-     job is fine):
-       ssh -N -f -o ServerAliveInterval=30 -L 47311:127.0.0.1:47311 \
-           user@remote-host
-     Use a different LOCAL port if 47311 is taken:
-       -L 47399:127.0.0.1:47311   and put 47399 in the profile.
-  2. Register a profile in ~/.config/gotto-hando/profiles.toml
-     (macOS/Linux; $XDG_CONFIG_HOME honored) or
-     %APPDATA%\gotto-hando\profiles.toml (Windows). `local` is reserved
-     and cannot be defined here.
-       [profiles.winbox]
-       host  = "127.0.0.1"      # must be loopback (127.0.0.1, ::1,
-                                # localhost); anything else: exit 3
-       port  = 47311            # the LOCAL end of the tunnel
-       token = "s3cr3t"         # optional; must match --token.
-                                # Required on shared hosts
-       delay = "150ms"          # optional default delay for this PC
-                                # (overrides 100ms; --delay overrides it)
-       out   = "~/shots/winbox" # optional default capture directory
-                                # (--out and $GOTTO_HANDO_OUT override)
-     Profile names: [a-z0-9][a-z0-9_-]*. `gotto-hando --profiles` prints
-     the file path and the entries.
-  3. Verify:
-       gotto-hando winbox --ping   -> os=windows ... session=active
-       gotto-hando winbox cap      -> a PNG on THIS machine; inspect it,
-                                      pick coordinates.
-  4. Drive it exactly like local:
-       gotto-hando winbox 'win[]Blender' 'k[]a' 'cap'
+== REMOTE MAC (OVER SSH) ==
+  The bridge process owns the TCC permissions. Started from a Terminal
+  window, Terminal's Accessibility / Screen Recording grant covers it
+  (nothing to sign); started by a LaunchAgent, the BINARY is the
+  responsible process and needs a stable signing identity plus a one-time
+  grant on that Mac. `gotto-hando <dest> --request-perms` makes the bridge
+  call the prompt APIs, so the system prompts appear on that Mac's screen;
+  a person still flips the toggles. Procedure, plist, signing and caveats:
+  --help-macos, section "SESSION BRIDGE FOR SSH (REMOTE MAC)".
 
-== HOW A RUN TRAVELS ==
-  The client parses and validates everything (exit 2 on error, nothing
-  sent), then POSTs the IR with your --timeout as the deadline. The server
-  streams one result per line as it happens; captures come back inline and
-  are written under --out (or $GOTTO_HANDO_OUT, the profile's out, or
-  $TMPDIR/gotto-hando/<profile>/<run-id>/). Text and files given with [f]
-  are read on the CLIENT and sent as data; the server never touches your
-  files. Ctrl-C on the client cancels the run on the server and releases
-  held keys. If the connection drops mid-run the client exits 5
-  (state=unknown): run `qinfo` and `cap` before sending more input.
-  The deadline is enforced on both sides: the server aborts the running
-  line at deadline_ms (err E_TIMEOUT), releases held keys and finishes the
-  stream normally (exit 1); the client waits for that up to the deadline
-  plus 5s grace before declaring the connection lost.
+== REMOTE WINDOWS (BRIDGE) ==
+  An ssh-started process lives in Session 0 and cannot drive the desktop;
+  only the bridge, running in the logged-on session via a Task Scheduler
+  logon task ("Run only when user is logged on"), can. No permission
+  dialogs exist on Windows (perms=n/a); elevated apps need an elevated
+  bridge (UIPI). Registration, log file and caveats: --help-windows,
+  section "SESSION BRIDGE FOR SSH (TASK SCHEDULER)".
 
-== PROTOCOL ==
-  HTTP/1.1 + JSON on 127.0.0.1:<port>; results are streamed as NDJSON.
-  Both ends are the same binary; client and server must run the same
-  version (IR schema version "v"), otherwise the client exits 3.
-  Authentication: when the profile has a token every request carries
-  `Authorization: Bearer <token>`; a mismatch is 401 (exit 3).
-
-  GET  /v1/info
-       -> JSON with the qinfo fields plus "ver" and "v" (IR schema
-       version). Used for the connection check (--ping, run stage 3) and
-       version negotiation.
-  POST /v1/run
-       body: {"deadline_ms": N, "ir": {...}}   N = the client's remaining
-       --timeout in milliseconds; the server enforces it.
-       response: application/x-ndjson, one event per line, emitted as soon
-       as each op completes: {"event":"start",...}, then one object per op
-       with the same fields as --jsonl (line, status, cmd, ... ), then
-       {"event":"done",...}. Captures are inline as base64 in the op
-       event ("png"/"jpg" field); the client decodes them to local files.
-       exec stdout/stderr are inline UTF-8 strings (<= 64 KiB each,
-       "truncated" flag). The server never writes images to disk.
-       A run already in progress -> 409 busy.
-  POST /v1/cancel
-       cancel the run in progress: held keys are released and exec
-       children are killed. The client calls it on Ctrl-C; a dropped
-       connection counts as a cancel too.
-  POST /v1/request-perms
-       macOS: the server process calls AXIsProcessTrustedWithOptions
-       (prompt=true) and CGRequestScreenCaptureAccess() in its own GUI
-       session and returns {"perms":"accessibility:..,screen:.."}.
-       Windows: no-op, {"perms":"n/a"}. 409 while a run is in progress.
-
-  IR (what --ir prints and what /v1/run carries under "ir"):
-    {
-      "v": 1,
-      "ops": [
-        {"line": 1, "src": "win[]Blender", "op": "focus",
-         "selector": {"kind": "title", "value": "Blender", "regex": false},
-         "wait_ms": 0},
-        {"line": 2, "src": "k[c]v", "op": "key", "mods": ["ctrl"],
-         "keys": [["v"]], "repeat": 1, "gap_ms": 30},
-        {"line": 3, "src": "txt[ms=66]hello, world!", "op": "text",
-         "text": "hello, world!", "interval_ms": 66},
-        {"line": 4, "src": "m[]1024,133", "op": "move",
-         "point": {"frame": "desktop", "x": 1024, "y": 133},
-         "duration_ms": 0},
-        {"line": 5, "src": "c[n=2,w]50%,50%", "op": "click",
-         "button": "left", "count": 2, "gap_ms": 60, "mods": [],
-         "point": {"frame": "window", "x": 50, "y": 50,
-                   "x_pct": true, "y_pct": true}},
-        {"line": 6, "src": "cap[n=2,ms=100,label=after]", "op": "capture",
-         "frame": "desktop", "scale": 1.0, "format": "png",
-         "count": 2, "interval_ms": 100, "label": "after"},
-        {"line": 7, "src": "exec[]git status", "op": "exec",
-         "argv": ["git", "status"], "shell": false, "noerr": false,
-         "timeout_ms": 10000},
-        {"line": 8, "src": "exec[shell]dir /b", "op": "exec",
-         "shell": true, "cmd": "dir /b", "noerr": false,
-         "timeout_ms": 10000},
-        {"line": 9, "src": "open[]Blender", "op": "open",
-         "target": "Blender", "wait_ms": 0}
-      ],
-      "defaults": {"delay_ms": 100, "text_interval_ms": 0, "key_gap_ms": 30}
-    }
-    - Every op keeps "line" and "src" for error reporting.
-    - "keys" is a list of chords: k[]ctrl+shift+a b ->
-      [["ctrl","shift","a"],["b"]].
-    - "mods" and modifier key names are symbols (ctrl shift alt meta
-      primary); the server maps them to OS key codes, so the client can
-      build the IR before it knows the target OS.
-    - [f] file contents are inlined by the client; the server reads no
-      files.
-    - Capture ops carry label, frame, scale, format, count and interval but
-      NO output path; qclip[f] carries no path either. Paths are a client
-      concern.
-    - exec argv splitting is done by the client (platform-independent
-      rule); "noerr" is interpreted by the engine, the backend just
-      returns the exit code.
+== QUOTING ==
+  Quote for YOUR shell only (help.txt SHELL QUOTING): single-quote every
+  line or use -f / a quoted heredoc. The lines never pass through the
+  remote login shell - they go to the remote process's stdin - so remote
+  shell type (zsh, cmd.exe, PowerShell) and its quoting rules are
+  irrelevant, and a payload containing `$HOME`, backticks, `%PATH%` or `|`
+  is sent verbatim. The only remote command line gotto-hando builds is the
+  fixed one in HOW IT WORKS; --remote-bin is the one user value in it, so
+  keep it free of spaces or quote it for the remote shell yourself.
+  exec payloads are executed on the REMOTE machine by the bridge (help.txt
+  COMMANDS): exec[shell] uses that machine's login shell (macOS
+  `$SHELL -lc`, Windows `cmd /C`), so PATH is the user's normal one even
+  when the bridge was started by launchd or Task Scheduler.
 
 == TROUBLESHOOTING ==
-  exit 3  unknown profile      -> `gotto-hando --profiles`; check the file
-                                  path and [profiles.<name>] spelling.
-  exit 3  connection refused   -> tunnel not up (`ssh -N -f -L ...`), wrong
-                                  local port, or the server is not running.
-  exit 3  401 unauthorized     -> token mismatch between --token and the
-                                  profile.
-  exit 3  host not loopback    -> put host = "127.0.0.1" and tunnel with
-                                  ssh -L; direct LAN/VPN access is not
-                                  supported.
-  exit 3  version mismatch     -> client and server must be the same
-                                  gotto-hando version (IR schema); update
-                                  both.
-  exit 4  E_SESSION            -> the server is not in an active, unlocked
-                                  GUI session: --help-macos /
-                                  --help-windows.
+  All exit-3 cases mean nothing ran on the target. ssh's own diagnostic is
+  on stderr; read it first. Exit 4 arrives after the start object as
+  `abort: <message> (<E_CODE>)` on stderr (an abort object with --jsonl);
+  nothing ran either.
+  exit 3  "Could not resolve hostname" / "Connection refused" /
+          "Connection timed out"
+                               -> sshd not running or not reachable; the
+                                  <dest> is not a host or alias ssh knows
+                                  (`ssh <dest> true` must work by itself).
+  exit 3  "Permission denied (publickey...)"
+                               -> keys/agent not set up for that account.
+  exit 3  "command not found" / "'gotto-hando' is not recognized"
+                               -> the binary is not on the PATH sshd uses:
+                                  `ssh <dest> gotto-hando --version`, then
+                                  install into such a directory or use
+                                  --remote-bin <absolute path>.
+  exit 3  remote exited before its start line, no JSONL at all
+                               -> wrong --remote-bin (some other program),
+                                  a gotto-hando too old to know --jsonl /
+                                  --inline-captures / --expect-version
+                                  (usage error, exit 2), or the remote copy
+                                  itself failed with exit 2 (its message is
+                                  relayed on stderr).
+  exit 3  "version mismatch: remote <x>, expected <y>"
+                               -> the remote gotto-hando is another version
+                                  than yours; install the same version on
+                                  both machines (REMOTE SETUP: COMMON).
+  exit 5  state=unknown         -> the ssh connection dropped mid-run
+                                  (network, sshd restart, laptop sleep) or
+                                  no done line arrived within --timeout +
+                                  5s. The bridge released held keys when it
+                                  noticed; run `qinfo` and `cap` before
+                                  sending more input.
+  exit 4  E_SESSION "start gotto-hando --bridge in the logged-on GUI
+          session"              -> no bridge is running for that user (or
+                                  nobody is logged on). Log on there, start
+                                  it (terminal, LaunchAgent, Task Scheduler
+                                  task), check bridge.log; then retry.
+  exit 4  E_SESSION locked     -> lock screen / screen saver / UAC secure
+                                  desktop on the remote PC. Unlock; keep it
+                                  awake (platform texts).
   exit 4  E_PERMISSION (macOS) -> Accessibility / Screen Recording not
-                                  granted to the server binary. Try
-                                  `gotto-hando <profile> --request-perms`:
-                                  the server pops the system prompts in
-                                  its own GUI session (LaunchAgent, not an
-                                  SSH shell - otherwise it just returns
-                                  missing with no prompt). A person at
-                                  that Mac must still flip the toggles;
-                                  restart the server afterwards for Screen
-                                  Recording, then `qinfo`. Details:
-                                  --help-macos. Windows server: no-op,
-                                  perms=n/a.
-  409 busy                     -> another run is in progress on that
-                                  server; wait or cancel it (Ctrl-C on
-                                  that client).
-  Blank captures / ignored input with everything "ok"
-                               -> server started from an SSH shell or a
-                                  service; restart it inside the GUI
-                                  session (see the platform help).
-  Slow first round trip        -> normal (~100 ms over a LAN tunnel). If
-                                  every run is slow, check
-                                  ServerAliveInterval and that autossh is
-                                  not reconnecting in a loop.
+                                  granted to the process that owns the
+                                  bridge (Terminal, or the binary under a
+                                  LaunchAgent). `gotto-hando <dest>
+                                  --request-perms` pops the prompts on that
+                                  Mac's screen; a person toggles them, then
+                                  restart the bridge for Screen Recording.
+                                  --help-macos.
+  perms=missing right after granting
+                               -> Screen Recording applies to processes
+                                  started after the toggle: restart the
+                                  bridge. Still missing: the binary's
+                                  signing identity changed (rebuild) -
+                                  re-add it (--help-macos).
+  Blank captures / input ignored with everything "ok"
+                               -> display asleep, or another user owns the
+                                  console (fast user switching / RDP). Wake
+                                  it, switch to that user, or reconnect the
+                                  console (--help-windows tscon).
+  Every run is slow           -> ssh connection setup each time. Add to
+                                  ~/.ssh/config:
+                                    Host *
+                                      ControlMaster auto
+                                      ControlPath ~/.ssh/cm-%r@%h:%p
+                                      ControlPersist 10m
+  Password prompt appears     -> ssh is asking; it works but blocks agents.
+                                  Set up keys or an agent.
