@@ -1,0 +1,35 @@
+---
+title: "Post-v1 extensions (M3/M4): qwin filters, jpg, cursor capture, capture APIs"
+parent: 260907-epic-gotto-hando-v1
+---
+
+# Post-v1 extensions (M3/M4): qwin filters, jpg, cursor capture, capture APIs
+
+## Background
+
+Items deferred past v1 (marked M3/M4 in CONCEPT.md ch. 13). None of them
+appears in the help texts today; each one must add itself to the help text
+in the same commit as the code, per the single-SoT rule in the epic.
+
+- `qwin` selector filters beyond substring/regex.
+- `cap[fmt=jpg,q=]` (v1 captures are PNG only; `fmt=` is E_SYNTAX).
+- `cap[cursor]` cursor overlay in captures.
+- ScreenCaptureKit (macOS; CGWindowListCreateImage / CGDisplayCreateImage
+  are deprecated since 14.4) and DXGI Desktop Duplication (Windows) capture
+  paths.
+- A CI release matrix producing darwin/windows binaries.
+- Clipboard image payload: put an agent-local image on the target clipboard
+  (e.g. `clip[f,img]./shot.png`, `paste[f,img]./shot.png`) so a local asset
+  can be pasted straight into a remote tool. `[f]` keeps its meaning (a
+  file on the agent's machine); the new part is a binary-safe wire form for
+  a `<dest>` (base64 inside the line, with its own size limit above 64 KiB)
+  and the platform writers (macOS NSPasteboard PNG/TIFF, Windows
+  CF_DIB/PNG). v1 answer: scp to the same destination, then `open[]`/`exec[]`
+  (help-remote.txt HOW IT WORKS).
+
+## Phases
+
+### Phase 1: To be split when picked up
+
+Each bullet above is small enough to be its own phase or ticket; decide the
+split when promoting this ticket.
