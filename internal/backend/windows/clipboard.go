@@ -38,6 +38,10 @@ func (b *Backend) ClipboardSet(ctx context.Context, s string) error {
 	}
 	ptr, _, _ := procGlobalLock.Call(h)
 	if ptr == 0 {
+		// GlobalLock failed: h is still ours (ownership only transfers to
+		// the system on a successful SetClipboardData below), so free it
+		// rather than leaking the block.
+		procGlobalFree.Call(h)
 		return errors.New("GlobalLock failed")
 	}
 	// go vet's unsafeptr check flags this uintptr->unsafe.Pointer
@@ -64,6 +68,9 @@ func (b *Backend) ClipboardSet(ctx context.Context, s string) error {
 	// here.
 	r, _, _ := procSetClipboardData.Call(cfUnicodeText, h)
 	if r == 0 {
+		// SetClipboardData failed: the system never took ownership of h, so
+		// it is still ours to free.
+		procGlobalFree.Call(h)
 		return errClipboardSetFailed
 	}
 	return nil

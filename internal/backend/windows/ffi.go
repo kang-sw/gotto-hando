@@ -24,7 +24,7 @@ var (
 
 	// SendInput / physical key state (keyboard.go, mouse.go, probes.go).
 	procSendInput        = user32.NewProc("SendInput")
-	procGetAsyncKeyState  = user32.NewProc("GetAsyncKeyState")
+	procGetAsyncKeyState = user32.NewProc("GetAsyncKeyState")
 
 	// Displays and DPI (backend.go's activeDisplays / dpiScale).
 	procEnumDisplayMonitors = user32.NewProc("EnumDisplayMonitors")
@@ -52,6 +52,7 @@ var (
 	procGlobalAlloc      = kernel32.NewProc("GlobalAlloc")
 	procGlobalLock       = kernel32.NewProc("GlobalLock")
 	procGlobalUnlock     = kernel32.NewProc("GlobalUnlock")
+	procGlobalFree       = kernel32.NewProc("GlobalFree")
 )
 
 // point32 is a Win32 POINT (LONG x, y) - GetCursorPos's out-param shape.
