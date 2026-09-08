@@ -188,6 +188,98 @@ stopped the same run prints `start` then `abort` E_SESSION and exits 4, while a
 connection mid-run holding a key has it released (visible in bridge.log and a
 following `qinfo`).
 
+### Result (e18b19a) - 2026-09-08
+
+Range `7f52aac..e18b19a` on `impl/main/boxer-both-twig` (survey plan 7f52aac;
+9 impl commits to 4037b1c; 6 review-fix commits to e18b19a; +1 docs commit
+1bf8fb1). Windows-only slice as scoped.
+
+Behavioral delta:
+- `gotto-hando --bridge` (Windows): resident named-pipe listener on
+  `\\.\pipe\gotto-hando-<username>` with a current-user SDDL DACL
+  (`D:P(A;;GA;;;<SID>)`), `FILE_FLAG_FIRST_PIPE_INSTANCE` so a second instance
+  exits via `ErrBridgeAlreadyRunning`; one run at a time (the GOOS-agnostic
+  `internal/bridge.Session` serializes on a mutex); per-run/error line to
+  `%LOCALAPPDATA%\gotto-hando\bridge.log` (stderr fallback). Protocol: one
+  IR-JSON doc + top-level `run` object in, JSONL out (`start`, per-line,
+  `done`/`abort`); IR `"v"` mismatch -> `abort` E_CONNECT.
+- `gotto-hando local` on a remote Windows session (`IsRemoteSession`:
+  `SSH_CONNECTION`/`SSH_TTY`, or process session != active console) forwards
+  the run to the bridge and never injects in-process; no bridge reachable ->
+  `abort` E_SESSION after `start`, exit 4, with the help hint. A
+  qinfo/qdisp/qmouse/sleep/set/comments-only run is answered in-process
+  (`session=inactive`). Through the bridge, `qinfo` reports `session=bridge`.
+- Caller disconnect mid-run: the bridge's `OnResult` write failure cancels the
+  run ctx; the engine's per-op `ctx.Err()` check stops the rest and its
+  unconditional end-of-run `releaseAll` releases held keys/buttons.
+- `internal/bridge` is GOOS-agnostic (imports only ir/engine/output/backend),
+  tested via `net.Pipe()` + `dryrun.Backend`. darwin/other `--bridge` keeps the
+  pre-ticket stub byte-for-byte (`abort(EValidate, "session bridge not
+  implemented")`).
+
+Shared-package changes (all additive / backward-compatible; local path passes
+nil OnResult + `context.Background()`, so it is unaffected):
+`engine.RunOptions.OnResult` + a per-op `ctx.Err()` loop check; `output.WriteAbort`
+split into `WriteStart`+`WriteAbortEvent`; exported `engine.ResultDetailFromJSON`;
+new `ir.Unmarshal` (the wire's IR JSON decoder, hand-mirrors the encoder);
+`qclip` now sets `res.JSON = [{text: <clip>}]` (fixes a pre-existing gap vs
+help.txt:634, needed for the round-trip and for plain-mode reconstruction).
+
+Review (partitioned correctness/fit/test; 3 Critical, all `[fixed]` and
+re-verified clean at Critical review #2 by direct inspection + independent
+build/test):
+- C1 `[fixed]`: the bridge streamed only via `OnResult`, which fired only in
+  the op loop, so end-of-run auto-release **warn** lines were dropped over the
+  wire (printed locally via the `sum.Results` scan). Fix fires `OnResult` for
+  the warns; the implementer found and fixed the same omission in 3 more
+  in-loop paths (ctx-cancel skip, fail-fast skip, cap-on-error extra). The
+  OnResult/Results pairing is now documented as an invariant at the field.
+- C2 `[fixed]`: `Op.HasWait` was never serialized/decoded, so `open[wait=]`/
+  `win[wait=]` lost their wait behavior across the wire (silent wrong result;
+  the byte-equality round-trip test structurally could not catch it). Fix
+  emits/decodes `has_wait`; the round-trip fixture now sets it; help.txt
+  example + golden updated.
+- C3 `[fixed]`: a second concurrent caller hit `ERROR_PIPE_BUSY` on the
+  single-instance pipe and was misreported as "bridge not running". Fix loops
+  `DialBridge` on BUSY via `WaitNamedPipe` (new `WaitNamedPipeW` LazyProc,
+  kernel32 - x/sys/windows has no wrapper), returning genuine
+  `ERROR_FILE_NOT_FOUND` immediately.
+- Important (best-effort, relayed once, all `[fixed]`): I1 KeepGoing/CapOnError
+  now exercised e2e through the real Encode/decode path; I2 malformed-request
+  plain-text behavior locked in by test (no format change); I3 request read
+  bounded to 16 MiB.
+- Minor (record-only): dead `Quiet` wire field (encoded, never consumed
+  server-side); `win`/`qmouse` decode structs mix tagged and untagged fields;
+  `runBridge`/`forwardToBridge` bodies duplicated across dispatch_darwin.go /
+  dispatch_other.go; `json_decode` round-trip fixture never exercises the
+  optional-field-omitted (HasPoint:false, nil `set` pointers) paths.
+
+Verification evidence: `go build ./...` native/windows/darwin/linux
+(`CGO_ENABLED=0`) clean; `go test ./... -race -count=1` all pass;
+`GOOS=windows go test -c` for cmd/gotto-hando + internal/backend/windows +
+internal/bridge compiles clean; `gofmt -l .` empty; `git diff 7f52aac --
+go.mod go.sum` empty (no new dependency - x/sys/windows only). `go vet` shows
+only the 2 pre-existing `unsafe.Pointer` warnings in windows/clipboard.go
+(untouched).
+
+Unresolved / deferred:
+- **All Windows-specific code is compile-only-verified here** (Go is not
+  installed on the Windows box; this dev host is macOS). C3's retry loop and
+  the whole pipe transport have no runtime test - they ride on the over-ssh
+  acceptance pass below.
+- I2 forwarder note: on a malformed request the forwarder discards the
+  plain-text line as the `start` object then fails E_CONNECT on the next read;
+  only reachable if the local encoder and bridge decoder disagree (an internal
+  bug, not a runtime scenario) - left as-is.
+
+OVER-SSH ACCEPTANCE (pending; the user runs `gotto-hando --bridge` once in the
+console/RDP session of `sw.kang@192.168.100.2`, then this is autonomous over
+ssh): `local 'qinfo'` -> `session=bridge`; `txt[]...` then `k[c]a` `k[c]c`
+`qclip` round-trip returns the injected text; with the bridge stopped the same
+run prints `start` then `abort` E_SESSION exit 4 while a `qinfo`-only run still
+answers `session=inactive`; a caller dropping the connection mid-run holding a
+key has it released (bridge.log + a following `qinfo`).
+
 ### Phase 1: ssh transport
 
 Goals: destination parsing, local parse/validate and `[f]` inlining with the
