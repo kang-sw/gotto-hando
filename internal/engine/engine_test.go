@@ -254,6 +254,80 @@ func TestExecNonZeroSoftenedByNoerr(t *testing.T) {
 	}
 }
 
+// TestCancelledContextStopsRunAndReleasesHeldKeys: a cancelled ctx (the
+// bridge's disconnect-detection path, internal/bridge, 260908-feat-remote-
+// ssh Phase 0) stops the run before any remaining line executes,
+// independent of -k, and still releases keys/buttons held so far via the
+// normal end-of-run releaseAll.
+func TestCancelledContextStopsRunAndReleasesHeldKeys(t *testing.T) {
+	seq := parse(t, "kd[]shift", "k[]a", "k[]b")
+	ctx, cancel := context.WithCancel(context.Background())
+	be := &dryrun.Backend{}
+	opt := engine.RunOptions{
+		KeepGoing: true, // prove the cancel check is independent of -k
+		OnResult: func(r output.Result) {
+			if r.Cmd == "kd" {
+				cancel()
+			}
+		},
+	}
+	sum := engine.Run(ctx, be, seq, opt)
+
+	// Results: [ok(kd), skip, skip, warn(auto-released shift)] - releaseAll
+	// appends its own warn result for the key it releases (help.txt:566).
+	if got := statuses(sum); len(got) != 4 || got[0] != "ok" || got[1] != "skip" || got[2] != "skip" || got[3] != "warn" {
+		t.Fatalf("statuses = %v, want [ok skip skip warn]", got)
+	}
+	if sum.HeldReleased != 1 {
+		t.Fatalf("held_released = %d, want 1", sum.HeldReleased)
+	}
+	if be.Calls[len(be.Calls)-1] != "KeyUp shift" {
+		t.Fatalf("last call = %q, want KeyUp shift", be.Calls[len(be.Calls)-1])
+	}
+	for _, c := range be.Calls {
+		if c == "KeyDown a" || c == "KeyDown b" {
+			t.Fatalf("line after cancel should not have reached the backend; calls=%v", be.Calls)
+		}
+	}
+}
+
+// TestOnResultCalledOncePerCompletedLineInOrder: OnResult fires exactly once
+// per completed (non-skip) line, in order, with the same Result that ends up
+// in Summary.Results - the streaming hook internal/bridge relies on to
+// forward JSONL per line instead of waiting for the whole run.
+func TestOnResultCalledOncePerCompletedLineInOrder(t *testing.T) {
+	seq := parse(t, "k[]a", "k[]b", "k[]c")
+	be := &dryrun.Backend{}
+	var streamed []output.Result
+	opt := engine.RunOptions{OnResult: func(r output.Result) { streamed = append(streamed, r) }}
+	sum := engine.Run(context.Background(), be, seq, opt)
+
+	if len(streamed) != len(sum.Results) {
+		t.Fatalf("OnResult called %d times, want %d (one per Summary.Results entry)", len(streamed), len(sum.Results))
+	}
+	for i := range sum.Results {
+		if streamed[i].Line != sum.Results[i].Line || streamed[i].Status != sum.Results[i].Status || streamed[i].Cmd != sum.Results[i].Cmd {
+			t.Fatalf("streamed[%d] = %+v, want %+v", i, streamed[i], sum.Results[i])
+		}
+	}
+}
+
+// TestNilOnResultAndBackgroundContextUnaffected: the two new RunOptions/ctx
+// hooks are backward-compatible - a nil OnResult and an uncancelled
+// context.Background() (every existing call site) behave identically to
+// before this change.
+func TestNilOnResultAndBackgroundContextUnaffected(t *testing.T) {
+	seq := parse(t, "k[]a", "k[]b")
+	be := &dryrun.Backend{}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+	if got := statuses(sum); len(got) != 2 || got[0] != "ok" || got[1] != "ok" {
+		t.Fatalf("statuses = %v, want [ok ok]", got)
+	}
+	if sum.Exit != 0 {
+		t.Fatalf("exit = %d, want 0", sum.Exit)
+	}
+}
+
 // TestPreflightAbortCarriesCode: run.go's Preflight wiring (260907-feat-
 // darwin-backend Phase 1) unwraps a *backend.PreflightError from
 // Backend.Preflight into Summary.Aborted/AbortCode/AbortMsg with

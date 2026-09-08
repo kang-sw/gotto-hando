@@ -32,6 +32,14 @@ type RunOptions struct {
 	// --jsonl object ("data"/"fmt") instead of writing a file
 	// (help.txt --inline-captures :72-77).
 	InlineCaptures bool
+
+	// OnResult, when non-nil, is called synchronously right after each
+	// line's Result is computed, before the inter-line delay - the bridge
+	// (internal/bridge, 260908-feat-remote-ssh Phase 0) uses this to stream
+	// JSONL per line instead of waiting for the whole Summary. nil is a
+	// no-op, so every existing caller (the local-run path, every other
+	// test) is unaffected.
+	OnResult func(output.Result)
 }
 
 // Summary is the finished run: the per-line results, the auto-release warns,
@@ -110,6 +118,17 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 
 	for i := range seq.Ops {
 		op := &seq.Ops[i]
+		// A cancelled ctx means the caller is gone (the bridge's
+		// disconnect-detection path, internal/bridge): stop unconditionally,
+		// independent of -k/KeepGoing - once the caller is gone, "keep
+		// going" is moot. releaseAll below still runs unconditionally, so
+		// held keys/buttons are released the same as any other fail-fast
+		// stop.
+		if ctx.Err() != nil {
+			sum.Results = append(sum.Results, output.Result{Line: op.Line, Status: "skip", Cmd: kindCmd[op.Kind]})
+			sum.Skip++
+			continue
+		}
 		if failed && !opt.KeepGoing {
 			sum.Results = append(sum.Results, output.Result{Line: op.Line, Status: "skip", Cmd: kindCmd[op.Kind]})
 			sum.Skip++
@@ -119,6 +138,9 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 		r := st.execute(ctx, op)
 		r.TMS = time.Since(opStart).Milliseconds()
 		sum.Results = append(sum.Results, r)
+		if opt.OnResult != nil {
+			opt.OnResult(r)
+		}
 		switch r.Status {
 		case "err":
 			sum.Err++
@@ -270,6 +292,7 @@ func (st *engineState) execute(ctx context.Context, op *ir.Op) output.Result {
 		}
 		res.AlwaysShow = true
 		res.Detail = s
+		res.JSON = []output.KV{{Key: "text", Val: s}}
 	case ir.KindFocus:
 		return st.doFocus(ctx, op, res, fail)
 	case ir.KindQueryWindows:
