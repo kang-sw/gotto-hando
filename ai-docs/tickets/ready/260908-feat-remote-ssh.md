@@ -6,7 +6,9 @@ related:
   260907-feat-darwin-backend: prerequisite
   260907-feat-windows-backend: prerequisite for the Windows half of Phase 2
 sage-review-design: completed
-sage-review-design-reviewed: 70232986b745dd0e
+sage-review-design-reviewed: 6ce907560558bea3
+sage-review-completeness: completed
+sage-review-completeness-reviewed: 6ce907560558bea3
 ---
 
 # Remote: ssh-wrapped destinations and the session bridge
@@ -344,4 +346,4 @@ in-process execution); a disconnect test: a caller sends a run holding a key
 run, releases the key (visible in bridge.log and in a following `qinfo`/
 `cap`) and accepts the next caller; on a fresh macOS signing identity
 `--request-perms` over ssh raises the prompt on the Mac's screen and the
-local side prints the perms line / object with the documented exit code.
+local side prints the perms line / object with the documented exit code. Each recipe is verified end to end: the LaunchAgent (macOS) and Task Scheduler (Windows) recipes from the platform help files, started from a fresh login, bring up a bridge that a subsequent `gotto-hando <dest> 'qinfo'` reaches with `session=bridge`.
