@@ -76,8 +76,8 @@ When a spec heading `{#slug}` changes, include `renamed-spec: <old-stem> -> <new
      compact; route deep detail to specs, mental models, or manuals. -->
 
 - **Repo identity.** gotto-hando: AI 에이전트용 non-MCP 데스크톱 제어 CLI(Go 예정, macOS/Windows). 컨셉은 CONCEPT.md 참조.
-- **Project map / topology.** [Project-specific: key directories/packages and their roles.]
-- **Canonical flows.** [Project-specific: named workflows, entry points, or pipelines, if any.]
+- **Project map / topology.** `assets/` holds the normative help texts (`help*.txt`, single source of truth) embedded via `assets/assets.go`. `cmd/gotto-hando/` is the CLI entry point: argv scanning, `--help*`/`--version`/`--expect-version`, destination and line collection, dispatch. `internal/output/` owns the `E_*` error codes, the 0-5 exit-code mapping, and the plain/JSONL result/done/abort writers. Parser (`internal/syntax`), IR, the `Backend` interface, and the platform/remote backends are not built yet (later tickets).
+- **Canonical flows.** `gotto-hando <dest> [options] [line ...]` parses argv, collects lines (argv or `-f`/stdin), builds the run, and (from Phase 2 on) parses each line into IR and executes it against a backend, streaming plain or `--jsonl` output. `--help*` short-circuits to the embedded asset. See `assets/help.txt` for the full contract.
 
 ## Project Knowledge
 

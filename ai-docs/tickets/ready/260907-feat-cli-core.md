@@ -126,6 +126,38 @@ mixed `-f` + argv invocation exits 2; a test that every flag named in the
 OPTIONS table is accepted by the option parser and every parser flag appears
 in the table (this is drift test (g), landed early); formatter golden tests.
 
+### Result (cc2b42d) - 2026-09-08
+
+Landed the executable and output layer. `cmd/gotto-hando` (main, manual argv
+scanner in `options.go`, `--version`/`--expect-version` in `version.go`, line
+collection in `lines.go`, priority dispatch in `dispatch.go`) and
+`internal/output` (E_* codes and 0-5 exit mapping in `codes.go`, plain/JSONL
+result/done/abort writers in `writer.go`). `--help*` prints the embedded asset
+byte-for-byte and exits 0; every parser-dependent flag (`--check`, `--ir`,
+`-f`/stdin parsing) and later-ticket option/destination is parsed and rejected
+with exit 2 / `E_VALIDATE` "not implemented". Plain abort writes nothing to
+stdout plus one `abort: <msg> (<CODE>)` stderr line; JSONL abort emits `start`
+then `abort`, no `done`. Drift test (g) compares the OPTIONS table to the
+parser's flag set.
+
+Deviation: the plan claimed `--bridge`/`--version` are SYNOPSIS-only; the
+current `assets/help.txt` has real OPTIONS rows for both (line numbers moved
+after the remote-model rewrite), so both are `tableTracked` and the drift
+regex (>=2-space column gap) includes them. Only the four `--help*` flags are
+SYNOPSIS-only. Verified by extraction (17 rows) and a broken-fixture negative
+check.
+
+Review: fit clean; correctness clean + 1 Minor deferred (usage-error path
+emits plain text even under `--jsonl`; help.txt does not define that shape,
+deferred until a JSONL usage-error contract exists); test raised 2 Important
+coverage gaps, both fixed in cc2b42d (parseArgs error paths; interleaved
+options per help.txt SYNOPSIS). `go build`/`go vet`/`go test ./...` clean.
+
+Forward: Phase 2 wires the parser into the `--check`/`--ir`/`-f` paths that
+currently exit 2, and the Backend interface behind the `local` destination.
+The pointer spec files (help.md + three help-<os>.md) remain a ticket-closeout
+deliverable after Phase 3's drift tests.
+
 ### Phase 2: Parser, IR, static validation, Backend interface, dry-run
 
 Depends on Phase 1. Goals: tokenizer and parser for the GRAMMAR section
