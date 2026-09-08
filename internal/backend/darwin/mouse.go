@@ -24,10 +24,15 @@ const (
 	cgEventOtherMouseDragged = 27
 )
 
-// kCGScrollEventUnitLine: each wheel unit is one "tick" (a physical wheel
-// notch), matching help.txt scroll's ticks= payload (:339-341) more
-// directly than pixel units would.
-const cgScrollEventUnitLine = 1
+// CGScrollEventUnit (CGEventTypes.h): kCGScrollEventUnitLine (each wheel
+// unit is one "tick", matching help.txt scroll's ticks= payload :339-341
+// more directly than pixel units would - used for by=line, the default)
+// and kCGScrollEventUnitPixel (used only for by=page, per the ticket
+// Decision - see Scroll's doc comment for the CONCEPT.md reconciliation).
+const (
+	cgScrollEventUnitPixel = 0
+	cgScrollEventUnitLine  = 1
+)
 
 // CGEventField kCGMouseEventClickState: the click-burst counter
 // (help-macos.txt CAVEATS: "Double clicks are sent with the click-state
@@ -179,14 +184,17 @@ func (b *Backend) nextClickState(bt backend.Button) int {
 }
 
 // Scroll scrolls at the current pointer position (help.txt:339-341).
-// by=page uses the current display's height as one page's worth of scroll
-// (no current-window fallback needed: st.window is always nil in Phase 1,
-// win being Phase 2).
+//
+// Unit reconciliation (ticket Decision vs. CONCEPT.md ch.8): CONCEPT.md's
+// Korean summary describes scroll generally as line-unit
+// (kCGScrollEventUnitLine), which is correct for the default by=line case
+// below. The ticket's Decisions section is explicit and more specific for
+// by=page: "one page = the current window's height (the display's height
+// when no current window), sent in pixel units." That pixel-units clause
+// is authoritative for by=page specifically; it does not contradict
+// CONCEPT.md's line-unit statement, which is about by=line.
 func (b *Backend) Scroll(ctx context.Context, dir backend.Dir, ticks int, by backend.ScrollUnit) error {
-	amount := ticks
-	if by == backend.ScrollPage {
-		amount = ticks * b.pageLines()
-	}
+	units, amount := scrollUnitsAndAmount(ticks, by, b.pageHeightPixels())
 	var vertical, horizontal int32
 	switch dir {
 	case "up":
@@ -207,12 +215,12 @@ func (b *Backend) Scroll(ctx context.Context, dir backend.Dir, ticks int, by bac
 			// register-exhausting p1-p4 padding to land where the callee
 			// reads it; the fixed-arity XY binding used on amd64 below
 			// would silently drop wheel2 here.
-			ev = cgEventCreateScrollWheelEventXYVariadicARM64(b.evtSource, cgScrollEventUnitLine, 2, vertical, 0, 0, 0, 0, horizontal)
+			ev = cgEventCreateScrollWheelEventXYVariadicARM64(b.evtSource, units, 2, vertical, 0, 0, 0, 0, horizontal)
 		} else {
-			ev = cgEventCreateScrollWheelEventXY(b.evtSource, cgScrollEventUnitLine, 2, vertical, horizontal)
+			ev = cgEventCreateScrollWheelEventXY(b.evtSource, units, 2, vertical, horizontal)
 		}
 	} else {
-		ev = cgEventCreateScrollWheelEvent(b.evtSource, cgScrollEventUnitLine, 1, vertical)
+		ev = cgEventCreateScrollWheelEvent(b.evtSource, units, 1, vertical)
 	}
 	if ev == 0 {
 		return nil
@@ -223,19 +231,30 @@ func (b *Backend) Scroll(ctx context.Context, dir backend.Dir, ticks int, by bac
 	return nil
 }
 
-// pageLines approximates "one page" as the primary display's height in
-// lines, roughly matching a typical scrollable view's visible line count.
-// A precise measurement needs the frontmost window/view, which Phase 1
-// does not have (win is Phase 2); this is a best-effort constant scale
-// rather than that.
-func (b *Backend) pageLines() int {
+// scrollUnitsAndAmount is Scroll's pure unit-selection logic, split out so
+// it is testable without any CGEvent* call: by=line sends `ticks` in line
+// units (kCGScrollEventUnitLine); by=page sends `ticks * pageHeightPixels`
+// in pixel units (kCGScrollEventUnitPixel), per the ticket Decision (see
+// Scroll's doc comment for the CONCEPT.md reconciliation).
+func scrollUnitsAndAmount(ticks int, by backend.ScrollUnit, pageHeightPixels int) (units int32, amount int) {
+	if by == backend.ScrollPage {
+		return cgScrollEventUnitPixel, ticks * pageHeightPixels
+	}
+	return cgScrollEventUnitLine, ticks
+}
+
+// pageHeightPixels is one page's worth of pixel-unit scroll: the current
+// window's height, or the primary display's height when there is no
+// current window (ticket Decision, "one page = the current window's
+// height (the display's height when no current window)"). Phase 1 has no
+// win yet (st.window is always nil in the engine), so this always reads
+// the primary display's height.
+func (b *Backend) pageHeightPixels() int {
 	displays := activeDisplays()
 	for _, d := range displays {
-		if d.Primary {
-			if d.H > 0 {
-				return d.H / 20 // ~20 points per line, a reasonable default
-			}
+		if d.Primary && d.H > 0 {
+			return d.H
 		}
 	}
-	return 20
+	return 900 // conservative fallback if no primary display is reported
 }

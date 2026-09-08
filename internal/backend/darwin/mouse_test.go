@@ -5,6 +5,8 @@ package darwin
 import (
 	"runtime"
 	"testing"
+
+	"github.com/kang-sw/gotto-hando/internal/backend"
 )
 
 // kCGScrollWheelEventDeltaAxis1/2 (CGEventTypes.h) are the vertical/
@@ -69,5 +71,32 @@ func TestScrollWheelEventXYVariadicARM64HorizontalDeltaSurvivesRealABI(t *testin
 	defer cfRelease(evBuggy)
 	if gotH := cgEventGetIntegerValueField(evBuggy, kCGScrollWheelEventDeltaAxis2); gotH == int64(horizontal) {
 		t.Fatal("fixed-arity XY binding unexpectedly read the correct horizontal delta on arm64 - either this machine's ABI changed or the contrast assumption is stale; re-check whether cgEventCreateScrollWheelEventXYVariadicARM64 is still needed")
+	}
+}
+
+// TestScrollUnitsAndAmount locks in the by=line/by=page unit split (Fit +
+// correctness-minor review finding): by=line stays in kCGScrollEventUnitLine
+// (matching help.txt scroll's ticks= payload and CONCEPT.md's general
+// description), while by=page switches to kCGScrollEventUnitPixel with the
+// magnitude scaled by the page height in pixels - the ticket Decision's
+// literal "sent in pixel units" clause, which the pre-fix code violated by
+// sending a height/20 line-count approximation through the line-unit API.
+func TestScrollUnitsAndAmount(t *testing.T) {
+	const pageHeightPixels = 900
+
+	units, amount := scrollUnitsAndAmount(3, backend.ScrollLine, pageHeightPixels)
+	if units != cgScrollEventUnitLine {
+		t.Errorf("by=line units = %d, want cgScrollEventUnitLine (%d)", units, cgScrollEventUnitLine)
+	}
+	if amount != 3 {
+		t.Errorf("by=line amount = %d, want 3 ticks unscaled", amount)
+	}
+
+	units, amount = scrollUnitsAndAmount(3, backend.ScrollPage, pageHeightPixels)
+	if units != cgScrollEventUnitPixel {
+		t.Errorf("by=page units = %d, want cgScrollEventUnitPixel (%d)", units, cgScrollEventUnitPixel)
+	}
+	if want := 3 * pageHeightPixels; amount != want {
+		t.Errorf("by=page amount = %d, want %d (ticks * page height in pixels)", amount, want)
 	}
 }
