@@ -10,6 +10,43 @@ import (
 	"github.com/kang-sw/gotto-hando/internal/syntax"
 )
 
+// parseAndValidate is EXECUTION steps 1-2 (help.txt:464-471): parse ->
+// inline [f] files -> static validate. Shared by --check/--ir (analyze)
+// and the local-run dispatch path (dispatch.go), which both stop before
+// connect the same way on a diagnostic.
+func parseAndValidate(opts parsedOptions, lines []string) (*ir.Sequence, []ir.Diagnostic) {
+	defaults := ir.DefaultState()
+	if opts.Delay != "" {
+		if ms, ok := syntax.ParseDurationMS(opts.Delay); ok {
+			defaults.DelayMS = ms
+		}
+	}
+
+	seq, diags := syntax.Parse(lines, defaults)
+	diags = append(diags, syntax.Inline(seq)...)
+	diags = append(diags, ir.Validate(seq, len(lines))...)
+	return seq, diags
+}
+
+// writeDiagnostics prints every parse (E_SYNTAX) or validation (E_VALIDATE)
+// diagnostic sorted by line/col, one "<CODE> line <n> col <c>: <message>"
+// line followed by the indented source line (help.txt EXECUTION
+// :464-471). Shared by analyze and the local-run dispatch path.
+func writeDiagnostics(stderr io.Writer, diags []ir.Diagnostic) {
+	sort.SliceStable(diags, func(i, j int) bool {
+		if diags[i].Line != diags[j].Line {
+			return diags[i].Line < diags[j].Line
+		}
+		return diags[i].Col < diags[j].Col
+	})
+	for _, d := range diags {
+		fmt.Fprintf(stderr, "%s line %d col %d: %s\n", d.Code, d.Line, d.Col, d.Msg)
+		if d.Src != "" {
+			fmt.Fprintf(stderr, "  %s\n", d.Src)
+		}
+	}
+}
+
 // analyze implements the --check and --ir paths (EXECUTION steps 1-2,
 // help.txt:464-471): parse -> inline [f] files -> static validate, stopping
 // before connect. The parse/validation failure contract (the normative
@@ -24,30 +61,10 @@ import (
 //     including blank/comment lines), exit 0.
 //   - --ir success: stdout the IR JSON document, exit 0.
 func analyze(opts parsedOptions, lines []string, stdout, stderr io.Writer) int {
-	defaults := ir.DefaultState()
-	if opts.Delay != "" {
-		if ms, ok := syntax.ParseDurationMS(opts.Delay); ok {
-			defaults.DelayMS = ms
-		}
-	}
-
-	seq, diags := syntax.Parse(lines, defaults)
-	diags = append(diags, syntax.Inline(seq)...)
-	diags = append(diags, ir.Validate(seq, len(lines))...)
+	seq, diags := parseAndValidate(opts, lines)
 
 	if len(diags) > 0 {
-		sort.SliceStable(diags, func(i, j int) bool {
-			if diags[i].Line != diags[j].Line {
-				return diags[i].Line < diags[j].Line
-			}
-			return diags[i].Col < diags[j].Col
-		})
-		for _, d := range diags {
-			fmt.Fprintf(stderr, "%s line %d col %d: %s\n", d.Code, d.Line, d.Col, d.Msg)
-			if d.Src != "" {
-				fmt.Fprintf(stderr, "  %s\n", d.Src)
-			}
-		}
+		writeDiagnostics(stderr, diags)
 		return output.ExitValidation
 	}
 

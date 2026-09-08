@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/kang-sw/gotto-hando/assets"
@@ -115,9 +116,11 @@ func TestMixedFileAndArgvExitsTwo(t *testing.T) {
 
 // TestNotImplementedOptionsExitTwo covers every later-ticket option
 // (ticket Decisions: --bridge, --remote-bin, --inline-captures,
-// --request-perms) and the local/remote-dest paths, each asserting exit 2
-// with its exact stderr message. --check/--ir are now implemented (Phase 2)
-// and covered by analyze_test.go instead.
+// --request-perms) and the remote-dest path, each asserting exit 2 with
+// its exact stderr message. --check/--ir are now implemented (Phase 2) and
+// covered by analyze_test.go instead; the local-dest path is now
+// implemented on darwin (260907-feat-darwin-backend Phase 1) and covered
+// by TestLocalDestDispatch below instead of this table.
 func TestNotImplementedOptionsExitTwo(t *testing.T) {
 	cases := []struct {
 		name string
@@ -128,7 +131,6 @@ func TestNotImplementedOptionsExitTwo(t *testing.T) {
 		{"remote-bin", []string{"local", "--remote-bin", "/opt/gotto-hando"}, "abort: --remote-bin not implemented (E_VALIDATE)\n"},
 		{"inline-captures", []string{"local", "--inline-captures"}, "abort: --inline-captures not implemented (E_VALIDATE)\n"},
 		{"request-perms", []string{"local", "--request-perms"}, "abort: --request-perms not implemented (E_VALIDATE)\n"},
-		{"local-plain", []string{"local"}, "abort: platform backend not implemented, nothing ran (E_VALIDATE)\n"},
 		{"remote-dest", []string{"winbox", "qinfo"}, "abort: remote destinations not implemented (E_VALIDATE)\n"},
 	}
 	for _, c := range cases {
@@ -144,6 +146,42 @@ func TestNotImplementedOptionsExitTwo(t *testing.T) {
 				t.Fatalf("stderr = %q, want %q", errOut, c.want)
 			}
 		})
+	}
+}
+
+// TestLocalDestDispatch covers dispatch.go's dest=="local" path
+// (260907-feat-darwin-backend Phase 1, dispatch.go step 10): on darwin it
+// now runs for real through the darwin backend; on every other GOOS
+// dispatch_other.go's newLocalBackend stub still aborts E_VALIDATE with
+// the same message the pre-Phase-1 stub printed.
+func TestLocalDestDispatch(t *testing.T) {
+	out, errOut, code := runBin(t, "", "local")
+	if runtime.GOOS != "darwin" {
+		if code != 2 {
+			t.Fatalf("exit = %d, want 2 (stderr=%q)", code, errOut)
+		}
+		want := "abort: platform backend not implemented, nothing ran (E_VALIDATE)\n"
+		if errOut != want {
+			t.Fatalf("stderr = %q, want %q", errOut, want)
+		}
+		return
+	}
+	// darwin: a run with zero lines never touches Preflight's session/
+	// permission checks (help-macos.txt CHECK: an empty run has nothing to
+	// fail on, same rule as the qinfo/qdisp/qmouse/sleep/set exemption) -
+	// it always completes with a normal, empty done line, regardless of
+	// the GUI session's lock state.
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (stderr=%q)", code, errOut)
+	}
+	if errOut != "" {
+		t.Fatalf("stderr = %q, want empty", errOut)
+	}
+	if !strings.HasPrefix(out, "out ") {
+		t.Fatalf("stdout = %q, want it to start with the \"out <dir>\" line", out)
+	}
+	if !strings.Contains(out, "done ok=0 err=0 skip=0") {
+		t.Fatalf("stdout = %q, want a done ok=0 err=0 skip=0 line", out)
 	}
 }
 
