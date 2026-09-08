@@ -373,3 +373,98 @@ login-shell PATH, `exec[timeout=1s]sleep 5` killed with E_TIMEOUT,
 `open[wait=5s]TextEdit` followed by `qwin[]app:TextEdit`; then the manual
 checklist run of the help.txt QUICK START and EXAMPLES sections against
 TextEdit, now that every command they use is implemented.
+
+### Result (86e8c7f) - 2026-09-08
+
+Implemented on branch `impl/main/dense-yield-stool`, range `628620b..86e8c7f`
+(plan `628620b`; impl `a243b7d` HasWait fix, `bf1de33` darwin exec/open,
+`86e8c7f` engine formatting + `open[wait=]` polling).
+
+Landed:
+- darwin `exec` (`internal/backend/darwin/exec.go`) via `os/exec` (no cgo):
+  argv from the parser split, `shell` runs `$SHELL -lc <cmd>` (fallback
+  `/bin/zsh`), `timeout=` kills via `exec.CommandContext` and returns
+  `TimedOut` with a **nil** Go error (the engine checks `err!=nil` before
+  `TimedOut`/`Exit`, so a non-nil error would misreport `E_TIMEOUT` as
+  `E_EXEC`); a non-zero exit likewise returns nil error carrying `Exit` so
+  `noerr` can soften it; only spawn/unexpected-Wait failures return an error.
+  `cappedWriter` caps stdout/stderr at 65536 B each, sets `Truncated`, and
+  never errors the underlying `Write`.
+- darwin `open` (`open.go`) via `/usr/bin/open`: `buildOpenArgv` picks
+  `open -a <name>` for a bare name / `open <path>` for a path; a failure maps
+  to `E_EXEC`.
+- Engine: finished `doExec` (was a header skeleton) — `ms=`/`stdout=B`/
+  `stderr=B` detail header, per-line `  <1|2>\t<text>` `Extra`, and the
+  `exit`/`stdout`/`stderr`/`truncated` JSONL fields; `doExec` sets result
+  fields **directly** on the `TimedOut`/non-zero-exit paths rather than via
+  the passed-in `fail` closure (that closure captures `execute()`'s own
+  `res`, not `doExec`'s by-value copy, so routing err paths through it would
+  silently drop the attached `Extra`/`JSON` — regression-tested). Added
+  `doOpen`: `Open` then, only when `wait=` is present, poll the Phase 2
+  window list via the shared `pollForWindow` 100 ms loop for an `app`-kind
+  selector derived from the target (`E_NOWINDOW` on empty/timeout); it does
+  **not** call `Focus` and does **not** set `st.window` (only `win` does).
+- Fixed a confirmed latent bug: `op.HasWait` was never set by the parser
+  (`internal/syntax/build.go`), so `win[wait=]` silently never polled and
+  `open[wait=]` never hit its Accessibility gate. Now set for both the `win`
+  and `open` cases; regression test in `parse_test.go`. This also repairs the
+  previously-merged Phase 2 `win[wait=]`.
+- Deleted `internal/backend/darwin/stubs.go` (no stubs remain).
+
+Binding decisions (v1):
+- open target -> window selector: a bare name is used verbatim as an `app`
+  selector; a path is reduced to its basename minus a trailing `.app`.
+  Known limitation: a non-`.app` file/URL target has no statically derivable
+  app name, so `open[wait=]` on such a target will likely `E_NOWINDOW` even
+  after the file opens. Correct handling needs a runtime "what app opens
+  this" lookup (NSWorkspace), out of this phase's no-cgo scope; documented
+  here as a follow-up candidate. The ticket's own verification only exercises
+  the bare-app-name case.
+- exec stdout/stderr rendered stream-grouped (all stdout lines, then all
+  stderr), reading help.txt's "in order of appearance, best effort" as
+  license for grouping. True chronological interleaving would need a
+  `backend.ExecResult` shape change (an ordered `[]{Src,Text}`), a Backend
+  interface change out of scope this phase.
+
+Review: correctness/fit/test partitions all clean; one Minor (record-only,
+plan-doc): the plan's "exec needs no GUI session" note is wrong — exec/open
+are session-gated (not in `exemptFromSession`); only the read-only query set
+(qinfo/qdisp/qmouse/sleep/set/comments) is exempt. "clip qclip exec open
+need no permission" (help-macos.txt) means no Accessibility/Screen-Recording
+permission, NOT no session. The code correctly gates exec/open behind the
+session check; no source change.
+
+Verification (safe subset, all green, output read not assumed):
+- `go build ./...`, `go vet ./...`, `go test ./... -race` (all packages),
+  `GOOS=windows GOARCH=amd64 go build ./...` (windows `stubs.go` untouched,
+  still `errNotThisPhase`), `darwin/amd64`+`darwin/arm64` cross-compile.
+- Real CLI on the (now-unlocked, `session=active`) dev Mac: `exec[]true` ->
+  `ok exit=0`; `exec[]false` -> `err E_EXEC`; `exec[noerr]false` ->
+  `ok exit=1`; `exec[timeout=1s]sleep 5` -> `err E_TIMEOUT` after ~1001 ms;
+  `--jsonl` field order matches help.txt (`exit`/`stdout`/`stderr`/
+  `truncated`/`t_ms`).
+
+Cross-phase verification finding (Windows Phase 1, over ssh to the real box
+`sw.kang@192.168.100.2`, Win11 26200): the Phase 1 preflight **session gate
+is confirmed working on real Windows** — `k`/`m`/`txt`/`clip` all abort with
+`E_SESSION (session=inactive)` when run from the ssh login (which lands in an
+inactive session, not the active console session 1), while read-only
+`qinfo`/`qdisp`/`qmouse` succeed. Actual `SendInput` injection is **not**
+verifiable over ssh: the ssh process is not attached to the console desktop
+(WinSta0\\Default), the same barrier as a locked Mac. Windows Phase 1
+injection acceptance therefore still needs either the binary run inside the
+console/RDP session (`session=active`) or a running bridge
+(`session=bridge`) — the latter is the `260908-feat-remote-ssh` ticket.
+
+HOME-VERIFICATION CHECKLIST (Phase 3; the Mac now has `accessibility:ok`,
+`session=active`, so all but `cap` are doable whenever the Mac is free —
+`cap` still needs Screen Recording granted to the responsible process):
+- `exec[shell]echo $PATH` under a LaunchAgent-started `gotto-hando` shows the
+  login-shell PATH, not the reduced launchd PATH.
+- `open[wait=5s]TextEdit` then `qwin[]app:TextEdit` succeeds, window visible.
+- `open[wait=2s]<app name that never launches>` -> `E_NOWINDOW` after ~2s.
+- `open[]<bogus bundle name>` (no `wait=`) -> `E_EXEC` immediately.
+- `win[wait=5s]<title>` now actually waits ~5s instead of returning instantly
+  (confirms the `HasWait` fix; folds into the Phase 2 checklist item).
+- The help.txt QUICK START + EXAMPLES manual run against TextEdit (every
+  command they use is now implemented).
