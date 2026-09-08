@@ -29,9 +29,11 @@ session bridge for ssh, displays.
                          screen / screen saver. inactive = not a GUI
                          session (ssh) and no bridge running: nothing can
                          run (E_SESSION).
-  qinfo never prompts. Preflight checks only what the run contains: a run
-  of only qinfo qdisp qmouse sleep set and comments never fails on session
-  or permissions (it reports them); every other command needs an unlocked
+  qinfo never prompts. Preflight checks only what the run contains and the
+  held-key guard protects input injection, so a run of only qinfo qdisp
+  qmouse sleep set and comments never fails on the held-key, session or
+  permission checks (it reports session and perms); every other command
+  needs an unlocked
   GUI session, own or bridge (else E_SESSION, exit 4); the commands listed
   under accessibility need it and cap needs Screen Recording (else
   E_PERMISSION, exit 4); clip qclip exec open (without wait=) need no

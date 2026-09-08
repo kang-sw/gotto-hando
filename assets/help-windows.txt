@@ -31,10 +31,11 @@ gotto-hando --help-windows - Windows: interactive session, session bridge
                     session=bridge) runs as Administrator (UIPI, below).
   Preflight also rejects a run while a key or mouse button is physically
   held down (GetAsyncKeyState over every virtual key): release it and
-  retry (E_INPUT, exit 4). Preflight checks only what the run contains: a
-  run of only qinfo qdisp qmouse sleep set and comments never fails the
-  session check (it reports session=); every other command needs the
-  active, unlocked session or the bridge (help.txt EXECUTION step 4).
+  retry (E_INPUT, exit 4). Preflight checks only what the run contains and
+  the held-key guard protects input injection, so a run of only qinfo qdisp
+  qmouse sleep set and comments never fails it or the session check (it
+  reports session=); every other command needs the active, unlocked session
+  or the bridge (help.txt EXECUTION step 4).
 
 == INTERACTIVE SESSION REQUIRED ==
   SendInput and screen capture only work from a process inside the

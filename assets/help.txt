@@ -499,10 +499,12 @@ grep for it.
      open[wait=], macOS Screen Recording for cap; clip qclip exec open
      need none (E_PERMISSION); no key or mouse button physically held down
      (E_INPUT); absolute and disp= coordinates inside the desktop
-     (E_BOUNDS); every key name supported on that platform (E_INPUT). A
-     run of only qinfo qdisp qmouse sleep set and comments therefore never
-     fails the session or permission checks: qinfo reports them instead,
-     which is how you diagnose session=locked|inactive or perms=missing.
+     (E_BOUNDS); every key name supported on that platform (E_INPUT). The
+     held-key check guards input injection, so a run of only qinfo qdisp
+     qmouse sleep set and comments never fails it, nor the session or
+     permission checks: qinfo reports the session and permission state
+     instead, which is how you diagnose session=locked|inactive or
+     perms=missing.
   5. Run the lines in order. After each line wait d= when given, otherwise
      the global delay (100ms) unless the command is query/sleep/set/cap/
      exec/open. Each result is streamed as soon as its line completes.
