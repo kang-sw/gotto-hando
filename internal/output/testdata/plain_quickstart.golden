@@ -1,0 +1,7 @@
+out /tmp/gh/
+1 ok win id=771 app=Safari matched=1 0,25 1440x875 "Start Page"
+2 ok k
+3 ok txt chars=12
+4 ok sleep
+5 ok cap /tmp/gh/0000-cap-20260907T131501.502Z.png 1440x900 origin=0,0 scale=1
+done ok=5 err=0 skip=0 elapsed=1610ms held_released=0

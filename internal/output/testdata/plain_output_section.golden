@@ -1,0 +1,13 @@
+out /tmp/gh/
+1 ok win id=2314 app=Blender matched=1 0,25 1440x875 "Untitled - Blender"
+2 ok k
+3 ok txt chars=5
+4 ok cap /tmp/gh/0000-cap-20260907T131502.114Z.png 1440x900 origin=0,0 scale=1
+5 ok qwin
+  2314	4120	Blender	0,25 1440x875	*	Untitled - Blender
+  2290	612	Terminal	1440,25 1120x875		zsh - 120x40
+6 ok exec exit=0 ms=41 stdout=34B stderr=0B
+  1	C:\Users\me\scenes\untitled.blend
+7 err c[w]1500,300: coordinates outside current window (E_BOUNDS)
+8 skip cap
+done ok=6 err=1 skip=1 elapsed=1875ms held_released=0
