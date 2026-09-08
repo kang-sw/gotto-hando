@@ -92,12 +92,50 @@ var (
 	cgEventKeyboardSetUnicodeString func(event uintptr, length uint32, unicodeString *uint16)
 	cgEventSetFlags                 func(event uintptr, flags uint64)
 	cgEventSetIntegerValueField     func(event uintptr, field uint32, value int64)
+	// cgEventGetIntegerValueField is used only by ffi_test.go/mouse_test.go
+	// to read back a synthesized event's fields (e.g. the scroll-wheel
+	// delta axes) without needing to post it - CGEventCreate* does not
+	// require an unlocked session or Accessibility, only CGEventPost does.
+	cgEventGetIntegerValueField func(event uintptr, field uint32) int64
 	cgEventPost                     func(tap int32, event uintptr)
 	cgEventCreateMouseEvent         func(source uintptr, mouseType int32, point cgPoint, mouseButton uint32) uintptr
 	cgEventCreateScrollWheelEvent   func(source uintptr, units int32, wheelCount uint32, wheel1 int32) uintptr
 	cgEventCreateScrollWheelEventXY func(source uintptr, units int32, wheelCount uint32, wheel1, wheel2 int32) uintptr
-	cgEventCreate                   func(source uintptr) uintptr
-	cgEventGetLocation              func(event uintptr) cgPoint
+
+	// cgEventCreateScrollWheelEventXYVariadicARM64 is CGEventCreateScrollWheelEvent's
+	// C-*variadic* prototype: only source/units/wheelCount/wheel1 are named
+	// parameters; wheel2/wheel3 are "..." (CGEvent.h). On Apple's arm64 ABI
+	// (unlike the standard AAPCS64 that purego otherwise emulates), a
+	// variadic function's "..." tail is ALWAYS passed on the stack, never
+	// in a register, no matter how many integer registers are still free -
+	// see "Writing ARM64 Code for Apple Platforms" > Function Calling
+	// Conventions. cgEventCreateScrollWheelEventXY above binds wheel2 as a
+	// fifth named parameter, so purego places it in a register (x4) same
+	// as any other arg; the callee's va_arg for wheel2 reads the stack
+	// instead and gets garbage/zero - confirmed empirically on this
+	// darwin/arm64 machine with a small variadic C probe function dlopen'd
+	// standalone (no GUI/CGEventPost needed), see the fix commit's ## AI
+	// Context. Passing wheel2 through a `...any` tail alone is NOT enough
+	// either: purego's own variadic support (func.go RegisterFunc) still
+	// places values pulled from the `...any` slice in a free register when
+	// one is available - the same probe showed a plain `...any` binding
+	// (no padding) failing the same way as the fixed-arity one. The p1-p4
+	// uintptr padding parameters exhaust arm64's 8 integer argument
+	// registers (source/units/wheelCount/wheel1 already use 4, so 4 more
+	// padding params reach 8) before wheel2 is added, which makes purego's
+	// own register-vs-stack bookkeeping (func.go addInt) route wheel2 to
+	// the stack - the same place the real ABI puts it. The padding values
+	// are always 0 and never read by the callee (a true C variadic call's
+	// va_start/va_arg begins at the first stack slot, ignoring any spare
+	// registers). amd64 has no such stack-forcing rule for variadic
+	// arguments (System V ABI treats them like any other argument), so
+	// cgEventCreateScrollWheelEventXY above is correct as-is there; this
+	// binding is used only on arm64 (mouse.go's Scroll, runtime.GOARCH
+	// check).
+	cgEventCreateScrollWheelEventXYVariadicARM64 func(source uintptr, units int32, wheelCount uint32, wheel1 int32, p1, p2, p3, p4 uintptr, extra ...any) uintptr
+
+	cgEventCreate      func(source uintptr) uintptr
+	cgEventGetLocation func(event uintptr) cgPoint
 
 	// ApplicationServices: Accessibility
 	axIsProcessTrusted func() bool
@@ -171,10 +209,12 @@ func registerCoreGraphics() {
 	purego.RegisterLibFunc(&cgEventKeyboardSetUnicodeString, libCG, "CGEventKeyboardSetUnicodeString")
 	purego.RegisterLibFunc(&cgEventSetFlags, libCG, "CGEventSetFlags")
 	purego.RegisterLibFunc(&cgEventSetIntegerValueField, libCG, "CGEventSetIntegerValueField")
+	purego.RegisterLibFunc(&cgEventGetIntegerValueField, libCG, "CGEventGetIntegerValueField")
 	purego.RegisterLibFunc(&cgEventPost, libCG, "CGEventPost")
 	purego.RegisterLibFunc(&cgEventCreateMouseEvent, libCG, "CGEventCreateMouseEvent")
 	purego.RegisterLibFunc(&cgEventCreateScrollWheelEvent, libCG, "CGEventCreateScrollWheelEvent")
 	purego.RegisterLibFunc(&cgEventCreateScrollWheelEventXY, libCG, "CGEventCreateScrollWheelEvent")
+	purego.RegisterLibFunc(&cgEventCreateScrollWheelEventXYVariadicARM64, libCG, "CGEventCreateScrollWheelEvent")
 	purego.RegisterLibFunc(&cgEventCreate, libCG, "CGEventCreate")
 	purego.RegisterLibFunc(&cgEventGetLocation, libCG, "CGEventGetLocation")
 }

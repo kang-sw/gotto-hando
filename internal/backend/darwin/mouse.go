@@ -4,6 +4,7 @@ package darwin
 
 import (
 	"context"
+	"runtime"
 	"time"
 
 	"github.com/kang-sw/gotto-hando/internal/backend"
@@ -199,7 +200,17 @@ func (b *Backend) Scroll(ctx context.Context, dir backend.Dir, ticks int, by bac
 	}
 	var ev uintptr
 	if horizontal != 0 {
-		ev = cgEventCreateScrollWheelEventXY(b.evtSource, cgScrollEventUnitLine, 2, vertical, horizontal)
+		if runtime.GOARCH == "arm64" {
+			// ffi.go's cgEventCreateScrollWheelEventXYVariadicARM64 doc
+			// comment: Apple's arm64 ABI forces a C-variadic function's
+			// "..." tail onto the stack, so wheel2 (horizontal) needs the
+			// register-exhausting p1-p4 padding to land where the callee
+			// reads it; the fixed-arity XY binding used on amd64 below
+			// would silently drop wheel2 here.
+			ev = cgEventCreateScrollWheelEventXYVariadicARM64(b.evtSource, cgScrollEventUnitLine, 2, vertical, 0, 0, 0, 0, horizontal)
+		} else {
+			ev = cgEventCreateScrollWheelEventXY(b.evtSource, cgScrollEventUnitLine, 2, vertical, horizontal)
+		}
 	} else {
 		ev = cgEventCreateScrollWheelEvent(b.evtSource, cgScrollEventUnitLine, 1, vertical)
 	}
