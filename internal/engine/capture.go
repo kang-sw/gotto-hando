@@ -18,10 +18,10 @@ import (
 	"github.com/kang-sw/gotto-hando/internal/output"
 )
 
-// captureTimestampLayout is the UTC timestamp in a capture file name
+// CaptureTimestampLayout is the UTC timestamp in a capture file name
 // (help.txt OUTPUT "Capture paths" example
 // 0000-cap-20260907T131502.114Z.png, :601-606).
-const captureTimestampLayout = "20060102T150405.000Z"
+const CaptureTimestampLayout = "20060102T150405.000Z"
 
 // encodePNG encodes a backend.Image's raw pixels to PNG bytes (ticket
 // Decision: the backend returns raw pixels, the GOOS-agnostic engine does
@@ -46,13 +46,16 @@ func encodePNG(img backend.Image) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// capturePath builds one frame's output path (help.txt OUTPUT "Capture
+// CapturePath builds one frame's output path (help.txt OUTPUT "Capture
 // paths" :601-606): <out>/<NNNN>-<label>-<UTC timestamp>.png, with a
 // -00/-01/... frame suffix when the burst has more than one frame. An
 // explicit cap payload path overrides <out>/name (the frame suffix is then
 // spliced before its extension); the payload wins per help.txt cap
-// "A cap payload overrides the path for that capture" (:594).
-func capturePath(outDir, explicit, label, ts string, seq, index, n int) string {
+// "A cap payload overrides the path for that capture" (:594). Exported
+// (260908-feat-remote-ssh Phase 1) so the <dest> wrapper (internal/remote)
+// reproduces this same local naming convention when decoding
+// --inline-captures frames instead of duplicating the logic.
+func CapturePath(outDir, explicit, label, ts string, seq, index, n int) string {
 	if explicit != "" {
 		if n > 1 {
 			return withFrameSuffix(explicit, index)
@@ -74,9 +77,11 @@ func withFrameSuffix(path string, index int) string {
 	return strings.TrimSuffix(path, ext) + fmt.Sprintf("-%02d", index) + ext
 }
 
-// writeCaptureFile writes one PNG to disk, creating the capture directory
+// WriteCaptureFile writes one PNG to disk, creating the capture directory
 // on first use (Phase 1 never created it; the local run path now must).
-func writeCaptureFile(path string, data []byte) error {
+// Exported (260908-feat-remote-ssh Phase 1) so the <dest> wrapper writes
+// decoded --inline-captures frames through the same helper.
+func WriteCaptureFile(path string, data []byte) error {
 	if dir := filepath.Dir(path); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
@@ -113,7 +118,7 @@ func (st *engineState) doCapture(ctx context.Context, op *ir.Op, res output.Resu
 	if label == "" {
 		label = "cap"
 	}
-	ts := time.Now().UTC().Format(captureTimestampLayout)
+	ts := time.Now().UTC().Format(CaptureTimestampLayout)
 	seq := st.capSeq
 	st.capSeq++
 	explicit := op.FilePath
@@ -130,8 +135,8 @@ func (st *engineState) doCapture(ctx context.Context, op *ir.Op, res output.Resu
 		}
 		fr := capturedFrame{img: img, data: data}
 		if !st.inlineCaptures {
-			fr.path = capturePath(st.outDir, explicit, label, ts, seq, i, n)
-			if err := writeCaptureFile(fr.path, data); err != nil {
+			fr.path = CapturePath(st.outDir, explicit, label, ts, seq, i, n)
+			if err := WriteCaptureFile(fr.path, data); err != nil {
 				return err
 			}
 		}
