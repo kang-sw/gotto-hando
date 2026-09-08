@@ -15,26 +15,77 @@ import (
 
 var binPath string
 
-// TestMain builds the binary once (the ticket explicitly asks for a test
-// that "runs the binary") and shares it across every subprocess test
-// below.
+// exeName appends the platform executable suffix.
+func exeName(base string) string {
+	if runtime.GOOS == "windows" {
+		return base + ".exe"
+	}
+	return base
+}
+
+// buildGo runs `go build [tags...] -o outPath pkgDir`, failing the whole
+// test binary (os.Exit, matching the existing binPath build's own
+// failure handling) on error - every artifact TestMain builds is required
+// by some test, so there is no useful partial-failure mode.
+func buildGo(outPath, pkgDir string, tags ...string) {
+	args := []string{"build"}
+	if len(tags) > 0 {
+		args = append(args, "-tags", strings.Join(tags, ","))
+	}
+	args = append(args, "-o", outPath, pkgDir)
+	cmd := exec.Command("go", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintln(os.Stderr, "go build failed:", err)
+		fmt.Fprintln(os.Stderr, string(out))
+		os.Exit(1)
+	}
+}
+
+// TestMain builds every binary the subprocess tests below need, once, and
+// shares them across the whole package:
+//   - binPath: the real (no build tag) gotto-hando, run directly by every
+//     runBin call.
+//   - a `-tags dryrun` gotto-hando named "gotto-hando" (260908-feat-
+//     remote-ssh Phase 1's fake "remote" copy of itself, dispatch_dryrun.go
+//   - never selectable in a release build) and a fake `ssh`
+//     (testdata/fakessh), both placed in directories prepended to PATH so
+//     remote_test.go's <dest> ssh-wrapper tests drive binPath against
+//     them without touching a real ssh or OS backend.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "gotto-hando-test-*")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mkdtemp:", err)
 		os.Exit(1)
 	}
-	binPath = filepath.Join(dir, "gotto-hando")
-	if runtime.GOOS == "windows" {
-		binPath += ".exe"
-	}
-	cmd := exec.Command("go", "build", "-o", binPath, ".")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	binPath = filepath.Join(dir, exeName("gotto-hando"))
+	buildGo(binPath, ".")
+
+	remoteDir := filepath.Join(dir, "remote-bin")
+	sshDir := filepath.Join(dir, "fake-ssh")
+	if err := os.MkdirAll(remoteDir, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "mkdir:", err)
 		os.RemoveAll(dir)
-		fmt.Fprintln(os.Stderr, "go build failed:", err)
-		fmt.Fprintln(os.Stderr, string(out))
 		os.Exit(1)
 	}
+	if err := os.MkdirAll(sshDir, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "mkdir:", err)
+		os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	// The dryrun "remote" binary must be named exactly what
+	// remoteBinName's default resolves to ("gotto-hando") so the fake-ssh
+	// + real wrapper harness needs no --remote-bin override for its
+	// default-case tests.
+	buildGo(filepath.Join(remoteDir, exeName("gotto-hando")), ".", "dryrun")
+	buildGo(filepath.Join(sshDir, exeName("ssh")), "./testdata/fakessh")
+
+	// Prepend both to PATH for the whole test binary: the real `ssh`
+	// binary (if any) is on the original PATH after them, but fakessh
+	// intercepts every invocation this package makes (only remote_test.go
+	// ever spawns "ssh").
+	origPath := os.Getenv("PATH")
+	_ = os.Setenv("PATH", sshDir+string(os.PathListSeparator)+remoteDir+string(os.PathListSeparator)+origPath)
+
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
@@ -154,12 +205,13 @@ func TestInlineCapturesAcceptedPhase2(t *testing.T) {
 	}
 }
 
-// TestNotImplementedOptionsExitTwo covers the still-later-ticket options
-// (--bridge, --remote-bin) and the remote-dest path, each asserting exit 2
-// with its exact stderr message. --check/--ir are implemented (Phase 2) and
+// TestNotImplementedOptionsExitTwo covers the still-not-implemented options
+// (--bridge on this GOOS, `local --remote-bin`), each asserting exit 2 with
+// its exact stderr message. --check/--ir are implemented (Phase 2) and
 // covered by analyze_test.go; the local-dest path is covered by
 // TestLocalDestDispatch below; --inline-captures/--request-perms are
-// implemented in Phase 2 and covered by the two tests above.
+// implemented in Phase 2 and covered by the two tests above; the <dest>
+// ssh wrapper (260908-feat-remote-ssh Phase 1) is covered by remote_test.go.
 func TestNotImplementedOptionsExitTwo(t *testing.T) {
 	cases := []struct {
 		name string
@@ -168,7 +220,6 @@ func TestNotImplementedOptionsExitTwo(t *testing.T) {
 	}{
 		{"bridge", []string{"--bridge"}, "abort: session bridge not implemented (E_VALIDATE)\n"},
 		{"remote-bin", []string{"local", "--remote-bin", "/opt/gotto-hando"}, "abort: --remote-bin not implemented (E_VALIDATE)\n"},
-		{"remote-dest", []string{"winbox", "qinfo"}, "abort: remote destinations not implemented (E_VALIDATE)\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -251,16 +302,34 @@ func TestExpectVersionMismatch(t *testing.T) {
 }
 
 // TestExpectVersionMatch asserts a matching --expect-version does not
-// itself produce output and processing continues past it (falling
-// through, here, to dest resolution with no dest given).
+// itself produce output and processing continues past it - here, into the
+// same dest=="local" path TestLocalDestDispatch exercises (an explicit
+// "local" dest keeps this deterministic: 260908-feat-remote-ssh Phase 1
+// turned a bare/absent dest into a real ssh spawn, which would make this
+// test flaky/environment-dependent).
 func TestExpectVersionMatch(t *testing.T) {
-	_, errOut, code := runBin(t, "", "--expect-version", "0.1.0")
-	if code != 2 {
-		t.Fatalf("exit = %d, want 2 (stderr=%q)", code, errOut)
+	out, errOut, code := runBin(t, "", "--expect-version", "0.1.0", "local")
+	if runtime.GOOS != "darwin" {
+		if code != 2 {
+			t.Fatalf("exit = %d, want 2 (stderr=%q)", code, errOut)
+		}
+		want := "abort: platform backend not implemented, nothing ran (E_VALIDATE)\n"
+		if errOut != want {
+			t.Fatalf("stderr = %q, want %q", errOut, want)
+		}
+		return
 	}
-	want := "abort: remote destinations not implemented (E_VALIDATE)\n"
-	if errOut != want {
-		t.Fatalf("stderr = %q, want %q", errOut, want)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (stderr=%q)", code, errOut)
+	}
+	if errOut != "" {
+		t.Fatalf("stderr = %q, want empty", errOut)
+	}
+	if !strings.HasPrefix(out, "out ") {
+		t.Fatalf("stdout = %q, want it to start with the \"out <dir>\" line", out)
+	}
+	if !strings.Contains(out, "done ok=0 err=0 skip=0") {
+		t.Fatalf("stdout = %q, want a done ok=0 err=0 skip=0 line", out)
 	}
 }
 
