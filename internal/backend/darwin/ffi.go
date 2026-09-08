@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"structs"
 	"sync"
+	"unsafe"
 
 	"github.com/ebitengine/purego"
 )
@@ -72,6 +73,18 @@ var (
 	cfBooleanGetValue         func(b uintptr) bool
 	cfRelease                 func(cf uintptr)
 
+	// CoreFoundation: collection/number/string/data readers used by the
+	// Phase 2 window enumeration and capture pixel read-back.
+	cfArrayGetCount        func(arr uintptr) int
+	cfArrayGetValueAtIndex func(arr uintptr, idx int) uintptr
+	cfNumberGetValue       func(num uintptr, theType int32, valuePtr unsafe.Pointer) bool
+	cfStringGetCString     func(str uintptr, buffer *byte, bufferSize int, encoding uint32) bool
+	cfDataGetLength        func(data uintptr) int
+	// cfDataGetBytePtr returns *byte (not uintptr) so the capture pixel
+	// read-back builds a []byte with unsafe.Slice without a vet-flagged
+	// uintptr->unsafe.Pointer conversion.
+	cfDataGetBytePtr func(data uintptr) *byte
+
 	// CoreGraphics: session / displays
 	cgSessionCopyCurrentDictionary func() uintptr
 	cgGetActiveDisplayList         func(maxDisplays uint32, displays *uint32, displayCount *uint32) int32
@@ -81,6 +94,22 @@ var (
 
 	// CoreGraphics: permissions
 	cgPreflightScreenCaptureAccess func() bool
+	cgRequestScreenCaptureAccess   func() bool
+
+	// CoreGraphics: window list + screenshot capture (Phase 2). The
+	// CGWindowListCreateImage / CGDisplayCreateImage family is knowingly
+	// deprecated since macOS 14.4 (ticket Decision: ScreenCaptureKit is
+	// post-v1); they remain synchronous purego-bindable calls.
+	cgWindowListCopyWindowInfo  func(option uint32, relativeToWindow uint32) uintptr
+	cgWindowListCreateImage     func(screenBounds cgRect, listOption uint32, windowID uint32, imageOption uint32) uintptr
+	cgDisplayCreateImage        func(display uint32) uintptr
+	cgDisplayCreateImageForRect func(display uint32, rect cgRect) uintptr
+	cgImageGetWidth             func(img uintptr) int
+	cgImageGetHeight            func(img uintptr) int
+	cgImageGetBytesPerRow       func(img uintptr) int
+	cgImageGetBitsPerPixel      func(img uintptr) int
+	cgImageGetDataProvider      func(img uintptr) uintptr
+	cgDataProviderCopyData      func(provider uintptr) uintptr
 
 	// CoreGraphics: physical key/button state (Preflight check 3)
 	cgEventSourceKeyState    func(stateID int32, key uint16) bool
@@ -96,7 +125,7 @@ var (
 	// to read back a synthesized event's fields (e.g. the scroll-wheel
 	// delta axes) without needing to post it - CGEventCreate* does not
 	// require an unlocked session or Accessibility, only CGEventPost does.
-	cgEventGetIntegerValueField func(event uintptr, field uint32) int64
+	cgEventGetIntegerValueField     func(event uintptr, field uint32) int64
 	cgEventPost                     func(tap int32, event uintptr)
 	cgEventCreateMouseEvent         func(source uintptr, mouseType int32, point cgPoint, mouseButton uint32) uintptr
 	cgEventCreateScrollWheelEvent   func(source uintptr, units int32, wheelCount uint32, wheel1 int32) uintptr
@@ -138,7 +167,16 @@ var (
 	cgEventGetLocation func(event uintptr) cgPoint
 
 	// ApplicationServices: Accessibility
-	axIsProcessTrusted func() bool
+	axIsProcessTrusted            func() bool
+	axIsProcessTrustedWithOptions func(options uintptr) bool
+
+	// ApplicationServices: AXUIElement family (window minimize/raise/focus,
+	// title correlation - Phase 2). The AXError return is 0 (kAXErrorSuccess)
+	// on success.
+	axUIElementCreateApplication  func(pid int32) uintptr
+	axUIElementCopyAttributeValue func(element, attribute uintptr, value *uintptr) int32
+	axUIElementSetAttributeValue  func(element, attribute, value uintptr) int32
+	axUIElementPerformAction      func(element, action uintptr) int32
 
 	// Carbon: Secure Input
 	isSecureEventInputEnabled func() bool
@@ -193,6 +231,12 @@ func registerCoreFoundation() {
 	purego.RegisterLibFunc(&cfDictionaryGetValue, libCF, "CFDictionaryGetValue")
 	purego.RegisterLibFunc(&cfBooleanGetValue, libCF, "CFBooleanGetValue")
 	purego.RegisterLibFunc(&cfRelease, libCF, "CFRelease")
+	purego.RegisterLibFunc(&cfArrayGetCount, libCF, "CFArrayGetCount")
+	purego.RegisterLibFunc(&cfArrayGetValueAtIndex, libCF, "CFArrayGetValueAtIndex")
+	purego.RegisterLibFunc(&cfNumberGetValue, libCF, "CFNumberGetValue")
+	purego.RegisterLibFunc(&cfStringGetCString, libCF, "CFStringGetCString")
+	purego.RegisterLibFunc(&cfDataGetLength, libCF, "CFDataGetLength")
+	purego.RegisterLibFunc(&cfDataGetBytePtr, libCF, "CFDataGetBytePtr")
 }
 
 func registerCoreGraphics() {
@@ -202,6 +246,17 @@ func registerCoreGraphics() {
 	purego.RegisterLibFunc(&cgMainDisplayID, libCG, "CGMainDisplayID")
 	purego.RegisterLibFunc(&cgDisplayScreenSize, libCG, "CGDisplayScreenSize")
 	purego.RegisterLibFunc(&cgPreflightScreenCaptureAccess, libCG, "CGPreflightScreenCaptureAccess")
+	purego.RegisterLibFunc(&cgRequestScreenCaptureAccess, libCG, "CGRequestScreenCaptureAccess")
+	purego.RegisterLibFunc(&cgWindowListCopyWindowInfo, libCG, "CGWindowListCopyWindowInfo")
+	purego.RegisterLibFunc(&cgWindowListCreateImage, libCG, "CGWindowListCreateImage")
+	purego.RegisterLibFunc(&cgDisplayCreateImage, libCG, "CGDisplayCreateImage")
+	purego.RegisterLibFunc(&cgDisplayCreateImageForRect, libCG, "CGDisplayCreateImageForRect")
+	purego.RegisterLibFunc(&cgImageGetWidth, libCG, "CGImageGetWidth")
+	purego.RegisterLibFunc(&cgImageGetHeight, libCG, "CGImageGetHeight")
+	purego.RegisterLibFunc(&cgImageGetBytesPerRow, libCG, "CGImageGetBytesPerRow")
+	purego.RegisterLibFunc(&cgImageGetBitsPerPixel, libCG, "CGImageGetBitsPerPixel")
+	purego.RegisterLibFunc(&cgImageGetDataProvider, libCG, "CGImageGetDataProvider")
+	purego.RegisterLibFunc(&cgDataProviderCopyData, libCG, "CGDataProviderCopyData")
 	purego.RegisterLibFunc(&cgEventSourceKeyState, libCG, "CGEventSourceKeyState")
 	purego.RegisterLibFunc(&cgEventSourceButtonState, libCG, "CGEventSourceButtonState")
 	purego.RegisterLibFunc(&cgEventSourceCreate, libCG, "CGEventSourceCreate")
@@ -221,6 +276,11 @@ func registerCoreGraphics() {
 
 func registerApplicationServices() {
 	purego.RegisterLibFunc(&axIsProcessTrusted, libAppSvc, "AXIsProcessTrusted")
+	purego.RegisterLibFunc(&axIsProcessTrustedWithOptions, libAppSvc, "AXIsProcessTrustedWithOptions")
+	purego.RegisterLibFunc(&axUIElementCreateApplication, libAppSvc, "AXUIElementCreateApplication")
+	purego.RegisterLibFunc(&axUIElementCopyAttributeValue, libAppSvc, "AXUIElementCopyAttributeValue")
+	purego.RegisterLibFunc(&axUIElementSetAttributeValue, libAppSvc, "AXUIElementSetAttributeValue")
+	purego.RegisterLibFunc(&axUIElementPerformAction, libAppSvc, "AXUIElementPerformAction")
 }
 
 func registerCarbon() {
@@ -232,4 +292,54 @@ func registerCarbon() {
 // Rule") and must cfRelease it once done.
 func cfString(s string) uintptr {
 	return cfStringCreateWithCString(0, s, kCFStringEncodingUTF8)
+}
+
+// CFNumber type identifiers (CFNumber.h) used by the window-info readers.
+const (
+	kCFNumberSInt64Type  = 4
+	kCFNumberFloat64Type = 6
+)
+
+// cfStringGo copies a CFStringRef into a Go string via CFStringGetCString
+// (up to 1 KiB, enough for a window title). A 0 ref or a failed copy reads
+// as "" - a missing/empty title is not an error (help-macos.txt:21-24:
+// titles come back empty without Screen Recording).
+func cfStringGo(ref uintptr) string {
+	if ref == 0 {
+		return ""
+	}
+	var buf [1024]byte
+	if !cfStringGetCString(ref, &buf[0], len(buf), kCFStringEncodingUTF8) {
+		return ""
+	}
+	n := 0
+	for n < len(buf) && buf[n] != 0 {
+		n++
+	}
+	return string(buf[:n])
+}
+
+// cfNumberInt64 reads a CFNumberRef as an int64 (window id, pid, layer). A
+// 0 ref or a failed read yields 0.
+func cfNumberInt64(ref uintptr) int64 {
+	if ref == 0 {
+		return 0
+	}
+	var v int64
+	if !cfNumberGetValue(ref, kCFNumberSInt64Type, unsafe.Pointer(&v)) {
+		return 0
+	}
+	return v
+}
+
+// cfNumberFloat64 reads a CFNumberRef as a float64 (window bounds fields).
+func cfNumberFloat64(ref uintptr) float64 {
+	if ref == 0 {
+		return 0
+	}
+	var v float64
+	if !cfNumberGetValue(ref, kCFNumberFloat64Type, unsafe.Pointer(&v)) {
+		return 0
+	}
+	return v
 }

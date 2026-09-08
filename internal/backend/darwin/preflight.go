@@ -32,12 +32,22 @@ var accessibilityGated = map[ir.Kind]bool{
 	ir.KindScroll: true, ir.KindPaste: true, ir.KindFocus: true,
 }
 
+// capGated is the Screen Recording gate's command set: cap only
+// (help-macos.txt CHECK: "perms=screen:* gates cap only. Without it qwin
+// and win still run (status ok) but window titles come back empty"). This
+// is a NEW 6th check layered onto Phase 1's five-check order, not a
+// reordering.
+var capGated = map[ir.Kind]bool{
+	ir.KindCapture: true,
+}
+
 // Preflight implements the five preflight checks in the literal order the
 // ticket specifies, short-circuiting on the first failure (help.txt
 // Constraints list; help-macos.txt CHECK). It never prompts.
 func (b *Backend) Preflight(ctx context.Context, seq *ir.Sequence) error {
 	needsSession := false
 	needsAccessibility := false
+	needsScreen := false
 	for i := range seq.Ops {
 		op := &seq.Ops[i]
 		if !exemptFromSession[op.Kind] {
@@ -45,6 +55,9 @@ func (b *Backend) Preflight(ctx context.Context, seq *ir.Sequence) error {
 		}
 		if accessibilityGated[op.Kind] || (op.Kind == ir.KindOpen && op.HasWait) {
 			needsAccessibility = true
+		}
+		if capGated[op.Kind] {
+			needsScreen = true
 		}
 	}
 
@@ -67,6 +80,16 @@ func (b *Backend) Preflight(ctx context.Context, seq *ir.Sequence) error {
 		if b.keys.AnyKeyHeld(allKeycodes()) || b.keys.AnyButtonHeld() {
 			return &backend.PreflightError{Code: output.EInput,
 				Msg: "a key or mouse button is already physically held"}
+		}
+	}
+
+	// 3b. Screen Recording for cap (the 6th, cap-only gate; independent of
+	// Accessibility - qwin/win run without it, only cap needs it,
+	// help-macos.txt CHECK :21-24).
+	if needsScreen {
+		if !b.perm.ScreenRecording() {
+			return &backend.PreflightError{Code: output.EPermission,
+				Msg: "Screen Recording permission not granted (cap; see --help-macos)"}
 		}
 	}
 
