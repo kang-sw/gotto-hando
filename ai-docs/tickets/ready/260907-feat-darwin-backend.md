@@ -5,6 +5,8 @@ related:
   260907-feat-cli-core: prerequisite
 sage-review-design: completed
 sage-review-design-reviewed: 43788a8194458500
+sage-review-completeness: completed
+sage-review-completeness-reviewed: 89b668c89f2826db
 ---
 
 # macOS backend: input, windows, capture, permissions, exec/open
@@ -31,7 +33,6 @@ CAVEATS, and all of `assets/help-macos.txt`.
   - HIToolbox: `IsSecureEventInputEnabled`.
   - ApplicationServices/AX: `AXIsProcessTrustedWithOptions`, `AXUIElement*`
     (raise/focus, `AXMinimized`, window wait).
-  - ImageIO: PNG encoding of capture bitmaps.
   - Objective-C runtime via purego `objc` for AppKit: `NSPasteboard`,
     `NSWorkspace`, `NSRunningApplication`.
   Rejected: robotgo (cgo, breaks cross-compile).
@@ -44,6 +45,10 @@ CAVEATS, and all of `assets/help-macos.txt`.
   carries the constant `"format":"png"`, the inline JSONL object
   `"fmt":"png"`, and the file suffix is `.png`. JPEG and cursor overlay stay
   in `260907-feat-post-v1-extensions`.
+- Capture encoding boundary: the backend returns raw pixels in
+  `backend.Image` (never an encoded file); the engine/local side encodes PNG
+  with Go's standard `image/png`. PNG encoding is platform-independent, so it
+  stays out of the darwin backend and no ImageIO is used.
 - Capture APIs: `CGDisplayCreateImage` / `CGWindowListCreateImage` are
   deprecated since macOS 14.4 in favour of ScreenCaptureKit. v1 uses them
   knowingly: the supported floor is macOS 13+, tested on macOS 15 and 26;
@@ -86,6 +91,20 @@ CAVEATS, and all of `assets/help-macos.txt`.
     it `qwin`/`win` still run with empty titles (status ok); `qinfo` reports
     `screen:missing`.
   - `clip`, `qclip`, `exec`, `open` (without `wait=`) need no permission.
+- Preflight coded-error contract: on failure `Backend.Preflight` returns a
+  coded error (`backend.PreflightError` carrying an `output.ErrorCode` and a
+  message, placed so it introduces no import cycle) rather than a bare
+  `error`. The engine's `Run` calls `Preflight(ctx, seq)` before executing
+  any op and, on that coded error, emits the `abort` object with its code and
+  runs nothing; a non-coded error becomes `E_UNKNOWN` (exit 4). Defining the
+  type and wiring the `Preflight` call + abort mapping into
+  `internal/engine`'s `Run` is Phase 1 work - cli-core built `Run` against the
+  dry-run backend and deliberately left EXECUTION stages 3-6 unwired.
+- Local dispatch wiring: Phase 1 replaces the `dest == "local"` exit-2 stub in
+  `cmd/gotto-hando/dispatch.go` with construction of the darwin backend
+  (guarded by `runtime.GOOS == "darwin"`; other GOOS keep the exit-2 stub) and
+  a call to `engine.Run`, streaming plain/`--jsonl` output, so
+  `gotto-hando local ...` runs its Phase-1 command set for real.
 - A stable signing identity for rebuilds is scripted: `scripts/codesign-dev.sh`
   runs `codesign -s "gotto-hando-dev" --force` followed by `codesign -dv`,
   and a Makefile target runs it (help-macos.txt STABLE SIGNING IDENTITY
@@ -109,14 +128,16 @@ CAVEATS, and all of `assets/help-macos.txt`.
 - A preflight failure is reported as the `abort` object (help.txt JSONL):
   `{"event":"abort","code":"E_...","msg":"..."}` with no `done` object; in
   the plain format nothing goes to stdout and stderr gets
-  `abort: <message> (<E_CODE>)`. The backend returns code and message; the
-  CLI layer from `260907-feat-cli-core` prints it and maps the exit code
-  (E_CONNECT 3, everything else 4).
+  `abort: <message> (<E_CODE>)`. `Backend.Preflight` returns the code via
+  `backend.PreflightError`; the engine emits the `abort`, and the CLI layer
+  from `260907-feat-cli-core` prints it and maps the exit code (E_CONNECT 3,
+  everything else 4).
 - Held keys and buttons are released in reverse order on any failure and at
   the end of a run, with a `warn` line.
-- Capture bytes are returned to the engine, never written by the backend;
-  the CLI layer writes the file or, with `--inline-captures`, emits it as
-  base64 in JSONL (this keeps the ssh path identical).
+- Capture pixels are returned to the engine and encoded to PNG there (Go
+  `image/png`), never encoded or written by the backend; the CLI layer writes
+  the file or, with `--inline-captures`, emits it as base64 in JSONL (this
+  keeps the ssh path identical).
 - Multi-display: origin at the main display's top-left, negative coordinates
   allowed, `disp=N` follows `qdisp` order.
 
@@ -136,23 +157,33 @@ Goals: `k`, `kd`, `ku`, `txt`, `m`, `c`, `md`, `mu`, `drag`, `scroll`
 (`by=page` with the display-height fallback), `clip`, `paste`, `qclip`,
 `qmouse`, `qdisp`, `qinfo` (the complete line: os/osver/arch/ver/primary,
 `desktop=`/`displays=` via `CGGetActiveDisplayList`, session, perms), `sleep`,
-`set`, default and explicit delays, held-state tracking, session detection
+`set`, default and explicit delays, session detection
 (`CGSessionCopyCurrentDictionary`/`CGSSessionScreenIsLocked`), all five
 preflight checks with the per-command gating rule and the `abort` result,
 runtime bounds check for `r`/`%` (E_BOUNDS), Secure Input surfacing as a
 run-time `E_INPUT` on the affected keyboard-command line. Key name table
 mapped to virtual key codes per help.txt KEY NAMES, with
 `volup`/`voldown`/`mute` rejected in preflight. `w`-frame commands and
-E_BOUNDS for `w` are Phase 2 (they need window geometry).
-Verification: `k`/`txt`/`m`/`c`/`drag`/`scroll`/`clip`/`paste` against
-TextEdit plus `qinfo`/`qdisp`/`qmouse` output checked against System
-Settings > Displays; unit tests for key-code mapping and held-state release
-order using an injectable event sink; unit tests with injectable session,
-permission and key-state probes that a physically held key yields `abort`
-E_INPUT, that a `qinfo`-only run passes preflight with session=locked and
-perms missing, and that a run containing `k` fails E_SESSION / E_PERMISSION
-respectively; `go vet` and cross-compile for darwin/amd64 + darwin/arm64
-from the dev machine.
+E_BOUNDS for `w` are Phase 2 (they need window geometry). This phase also
+defines the `backend.PreflightError` coded error, wires `engine.Run` to call
+`Preflight` and map it to the `abort` object, and replaces the `local`
+dispatch stub in `cmd/gotto-hando/dispatch.go` with the darwin backend behind
+`runtime.GOOS == "darwin"`, so `gotto-hando local ...` runs its Phase-1
+command set end to end through the real CLI.
+Verification splits into two subsets. Lock-independent (runs on a locked or
+headless session, so it is done first): unit tests for key-code mapping and
+held-release ordering via the engine's held tracking using an injectable
+event sink; unit tests with injectable session, permission and key-state
+probes that a physically held key yields `abort` E_INPUT, that a `qinfo`-only
+run passes preflight with session=locked and perms missing, and that a run
+containing `k` fails E_SESSION / E_PERMISSION respectively; end to end through
+the real CLI, `gotto-hando local qinfo`/`qdisp`/`qmouse` print live values and
+`gotto-hando local 'k[]a'` on a locked session aborts `E_SESSION`; `go vet`
+and cross-compile for darwin/amd64 + darwin/arm64 from the dev machine.
+Interactive-injection (requires an unlocked GUI session with Accessibility
+granted): `k`/`txt`/`m`/`c`/`drag`/`scroll`/`clip`/`paste` against TextEdit,
+plus `qinfo`/`qdisp`/`qmouse` output checked against System Settings >
+Displays.
 
 ### Phase 2: Windows, capture, permissions request, signing script
 
@@ -161,7 +192,8 @@ Depends on Phase 1. Goals: `win` (selector matching per WINDOW SELECTORS,
 focus via AX, current-window state), `qwin` (window list rule from
 Decisions, line format per OUTPUT), `cap` (full/`w`/`disp=`/`rect=`,
 `scale`, `n`/`ms` frame series with absolute deadlines and slippage report,
-`label`; PNG via ImageIO only), `w` frame coordinates and E_BOUNDS for `w`,
+`label`; the backend returns raw pixels and the engine encodes PNG via Go
+`image/png`), `w` frame coordinates and E_BOUNDS for `w`,
 `scroll by=page` using the current window's height, Screen Recording gating
 for `cap` only, `--request-perms` (local) that calls the two request APIs,
 `scripts/codesign-dev.sh` and the Makefile target that runs it.
