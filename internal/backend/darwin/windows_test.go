@@ -160,6 +160,56 @@ func TestCaptureRectBounds(t *testing.T) {
 	}
 }
 
+// TestBGRAtoRGBA feeds bgraToRGBA a synthetic BGRA buffer with a stride
+// WIDER than w*4 (row padding) and a premultiplied/transparent pixel, then
+// asserts the exact tightly-packed RGBA output. This catches the two bug
+// classes pngcodec_test.go cannot (it only round-trips already-RGBA bytes):
+// an R/B channel swap, and a stride miscalculation that would leak the row
+// padding into the packed output. Alpha is forced opaque regardless of the
+// source alpha (v1 behavior).
+func TestBGRAtoRGBA(t *testing.T) {
+	const w, h, stride = 2, 2, 12 // w*4 == 8, so 4 bytes of row padding
+	src := make([]byte, stride*h)
+	// Poison the padding and the whole buffer so a stride bug shows up as a
+	// wrong byte rather than an incidental zero.
+	for i := range src {
+		src[i] = 0xEE
+	}
+	// row 0: pixel(0,0) opaque, pixel(1,0) premultiplied-transparent (A=128).
+	copy(src[0:4], []byte{10, 20, 30, 255}) // B,G,R,A -> R=30,G=20,B=10
+	copy(src[4:8], []byte{1, 2, 3, 128})    // -> R=3,G=2,B=1, alpha forced 255
+	// bytes src[8:12] stay 0xEE padding and must be ignored.
+	// row 1: pixel(0,1), pixel(1,1) fully transparent (A=0).
+	copy(src[12:16], []byte{40, 50, 60, 255}) // -> R=60,G=50,B=40
+	copy(src[16:20], []byte{7, 8, 9, 0})      // -> R=9,G=8,B=7, alpha forced 255
+	// bytes src[20:24] stay 0xEE padding.
+
+	got := bgraToRGBA(src, w, h, stride)
+	want := []byte{
+		30, 20, 10, 255, 3, 2, 1, 255, // row 0
+		60, 50, 40, 255, 9, 8, 7, 255, // row 1
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d (should be tightly packed w*h*4, no padding)", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("byte %d = %d, want %d\n got=%v\nwant=%v", i, got[i], want[i], got, want)
+		}
+	}
+}
+
+// TestCaptureNoWindowWrapsErrNoWindow proves cap[w] with no current window
+// wraps backend.ErrNoWindow (so engine/capture.go maps it to E_NOWINDOW,
+// consistent with c[w]/m[w]/drag[w]), not a bare error that would fall
+// through to E_CAPTURE.
+func TestCaptureNoWindowWrapsErrNoWindow(t *testing.T) {
+	_, err := captureRect(backend.CaptureReq{Frame: "window"}, twoDisplays(), nil)
+	if !errors.Is(err, backend.ErrNoWindow) {
+		t.Fatalf("err = %v, want it to wrap backend.ErrNoWindow", err)
+	}
+}
+
 func equalInts(a, b []int) bool {
 	if len(a) != len(b) {
 		return false
