@@ -8,6 +8,7 @@ sage-review-design: completed
 sage-review-design-reviewed: 55bf13435baadcbb
 sage-review-completeness: completed
 sage-review-completeness-reviewed: 0ae58bfdce4b9bd2
+completed: 2026-09-09
 ---
 
 # Windows backend: input, windows, capture, session checks, exec/open
@@ -244,3 +245,116 @@ window through the image-basename fallback; `exec[shell]dir` output is
 valid UTF-8 on a Korean-locale machine; `exec[timeout=1s]ping -n 10 localhost`
 is killed with E_TIMEOUT; then the QUICK START and EXAMPLES sections against
 Notepad, now that every command they use is implemented.
+
+### Result (46376b1) - 2026-09-08
+
+Windows backend Phase 2 lands the five previously stubbed `backend.Backend`
+methods in `internal/backend/windows/` (`Windows`, `Focus`, `Capture`,
+`Exec`, `Open`); `stubs.go` is deleted. The engine dispatch, PNG encode,
+`win[wait=]`/`open[wait=]` shared 100 ms poll loop, capture path building,
+and per-command session preflight were already GOOS-agnostic from the darwin
+phases and needed zero change (verified). No new `go.mod` dependency: most
+FFI is reused directly from `golang.org/x/sys/windows` v0.47.0; only the
+user32 focus/enum-text/`PrintWindow`, gdi32 capture family, and
+`ShellExecuteExW` (the Ex variant x/sys lacks) are new LazyDLL procs.
+
+Behavioral delta:
+- `win`/`qwin` — `EnumWindows` enumeration with the qwin filter (visible,
+  not cloaked via `DWMWA_CLOAKED`, non-empty title, not a tool window);
+  frame is DWM extended-frame bounds (`DWMWA_EXTENDED_FRAME_BOUNDS`), not the
+  raw window rect. `Focus` does `ShowWindow(SW_RESTORE)` + `SetForegroundWindow`
+  with the mandated `AttachThreadInput` + synthetic-Alt-tap retry, returning
+  `E_NOWINDOW` if still refused.
+- `cap` — GDI `BitBlt` for desktop/display/rect frames, `PrintWindow`
+  (`PW_RENDERFULLCONTENT`) for a window frame (black result = ok);
+  `GetDIBits` into a top-down 32-bit BGRA DIB, converted to tightly-packed
+  RGBA. `nativeScale` is always 1 on Windows (Per-Monitor-V2 DPI already
+  yields physical pixels).
+- `exec` — direct argv or `%ComSpec% /C` for `shell`; a Job Object with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` provides the timeout/cancel tree-kill
+  so no orphaned `cmd /C` grandchild (e.g. `ping.exe`) survives; output bytes
+  decoded from `GetConsoleOutputCP` (fallback `GetACP`) to UTF-8 with U+FFFD
+  substitution, DBCS lead+trail decoded as one unit.
+- `open` — `ShellExecuteExW` + `SEE_MASK_NOCLOSEPROCESS`; the launched PID and
+  target basename are recorded on `*Backend` so `Windows`'s app-selector
+  prefers that PID's window before the generic image-basename fallback
+  (satisfies the `open[wait=]` handoff resolution).
+
+Deviations from plan (both additive, no contract change):
+- `Exec`'s wait race also selects on `ctx.Done()` alongside the timeout timer,
+  restoring the ctx-cancel-reaps-child parity darwin gets from
+  `CommandContext` (matters when the bridge cancels `runCtx` on a dropped
+  connection); falls through the existing generic exit path, never reported as
+  `TimedOut`.
+- `decodeCodePage` does a strict whole-buffer `MB_ERR_INVALID_CHARS` decode
+  first, then an ascending 1–4-byte window scan so DBCS pairs decode as one
+  unit rather than shredding into two U+FFFD (the plan left the substitution
+  strategy as an implementation-time detail).
+
+Review: partitioned correctness/fit/test. Fit and test came back clean;
+correctness returned three Important findings, all fixed in 46376b1 —
+(1) `windows.NewCallback` was rebuilt per `Windows()`/`activeDisplays()` call,
+leaking from the process-global never-freed trampoline pool and eventually
+panicking a long-lived `--bridge` on the 100 ms poll loop (now built once via
+`sync.Once` with mutex-guarded package state); (2) `GetDIBits` was called with
+the DC the source bitmap was still selected into, an MSDN contract violation
+(now passes `hdcScreen`); (3) `Focus`'s foreground-lock retry ran without
+`runtime.LockOSThread`, so async preemption could migrate the goroutine and
+silently defeat the bypass (now pinned). New windows-backend modification
+guidelines recorded in `ai-docs/mental-model/windows-backend.md`.
+
+Verification done here (macOS host, Go absent on the target box): native
+`go build`/`go vet`/`gofmt -l`/`go test ./... -race` clean; `CGO_ENABLED=0
+GOOS=windows GOARCH=amd64` build + vet clean (only the two pre-existing
+documented clipboard `unsafe.Pointer` warnings); `go test -c
+./internal/backend/windows/...` compiles; four-GOOS build matrix
+(darwin/amd64, darwin/arm64, windows/amd64, linux/amd64) green. Pure-logic
+units added: `filterWindows`/`selectorMatches`, capture rect resolution
+(incl. `E_BOUNDS`/`E_NOWINDOW`), `buildExecArgv`, `cappedWriter` truncation,
+CP949 decode with a U+FFFD byte + DBCS re-sync, and `SHELLEXECUTEINFOW` /
+`BITMAPINFOHEADER` struct-size ABI checks.
+
+GUI acceptance — VERIFIED over the session bridge (P2 build running as the
+bridge in the console GUI session; the ssh-side client is the older
+Device-Guard-allowed build forwarding to it — see the Device Guard note
+below). Every boundary item passes: `qwin` returns only real windows with
+cloaked UWP excluded, Korean titles intact ("작업 관리자", "메모장") and
+minimized/off-screen flags correct; `cap[w]` at `scale=1` produced a PNG
+whose actual pixels are 1115x628 == the DWM extended-frame bounds `qwin`
+reports for the focused window, and `PrintWindow` rendered real content (not
+black — the terminal text was legible); `win[wait=2s]` on a never-appearing
+window returned `E_NOWINDOW` after ~2 s; `open[wait=5s]notepad` succeeded
+(window seen at 521 ms) and `qwin[]app:notepad` then matched it;
+`win[]app:Taskmgr` focused the window and a follow-up `qwin` confirmed
+`focused:true` (the `SetForegroundWindow` + `AttachThreadInput` bypass
+works); `exec[shell]dir` returned valid Korean UTF-8; `exec[timeout=1s]ping
+-n 10 localhost` was killed with `E_TIMEOUT` and `tasklist` confirmed no
+orphaned `ping.exe` (Job Object tree-kill). Not separately exercised:
+`open[wait=]` launcher-handoff basename fallback (Notepad spawns a fresh
+process each time, unsuitable to trigger a handoff; the PID-then-basename
+app-selector code path covers it) and the QUICK START/EXAMPLES injection
+walkthrough (non-boundary). The `cap` PNG is retained as an
+astra-vision-dogfood sample.
+
+Known verification-environment artifact (not a code defect): Windows Device
+Guard (WDAC) blocks executing the freshly cross-compiled binary over the
+non-interactive ssh channel (interactive console launch is fine), so the
+ssh-side client had to stay the older Device-Guard-allowed build while the
+console bridge was the P2 build. That client/bridge version skew makes some
+forwarded runs end with a spurious `E_CONNECT "bridge connection closed
+mid-run"` after the (correct) result line instead of a `done` event —
+non-deterministic across commands; every result payload was delivered intact
+and correct. Expected to disappear once client and bridge are the same build
+(the `260908-feat-remote-ssh` Phase 1 ssh transport).
+
+Deferred follow-ups (not this phase): JPEG / `fmt=` / `cursor` capture
+modifiers stay in `260907-feat-post-v1-extensions`. Minor record-only
+findings left as-is: `PrintWindow` content offset by the drop-shadow margin
+(under the v1 black-`PrintWindow`-is-ok simplification); `MB_ERR_INVALID_CHARS`
+failing for a few exotic console code pages (949 is fine); the Job-Object
+Start-then-assign race the plan itself pins as the sequence to use.
+
+
+## Resolution (2026-09-09)
+
+All phases complete. Phase 1 (keyboard/mouse/scroll/clipboard/text, session preflight) landed 4d523dc; Phase 2 (win/qwin/cap/exec/open native windows backend) landed 2832213+c4004c2 with correctness fixes 46376b1. GUI acceptance verified over the session bridge against the real console GUI session (P2 build as bridge, Device-Guard-allowed older build as ssh client): qwin cloaked-exclusion + DWM extended-frame bounds, cap[w] pixel WxH match with real PrintWindow content, win[wait] E_NOWINDOW, open[wait]+app-selector, win[] focus via AttachThreadInput bypass, exec[shell] Korean UTF-8, exec[timeout] E_TIMEOUT with Job-Object tree-kill leaving no orphan ping.exe. A client/bridge version-skew E_CONNECT artifact (result payloads all correct) is expected to clear with the 260908-feat-remote-ssh Phase 1 ssh transport. Post-v1 capture modifiers (JPEG/fmt=/cursor) remain in 260907-feat-post-v1-extensions.

@@ -21,6 +21,16 @@ type Backend struct {
 	session  sessionProbe
 	keys     keyStateProbe
 	displays displayProbe
+
+	// lastOpenPID/lastOpenBasename remember the most recent successful
+	// Open() launch (open.go), so a subsequent open[wait=]'s app-selector
+	// Windows() call (windows.go) can prefer that specific process's window
+	// over a same-named, unrelated one before falling back to the generic
+	// image-basename substring match (ticket Codebase Findings
+	// "open[wait=] PID-then-basename resolution"). A run executes one op at
+	// a time (CONCEPT.md), so these need no locking.
+	lastOpenPID      uint32
+	lastOpenBasename string
 }
 
 // New returns a ready Backend. Unlike darwin's dlopen-based New(), there is

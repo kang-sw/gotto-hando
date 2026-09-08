@@ -21,6 +21,8 @@ var (
 	user32   = windows.NewLazySystemDLL("user32.dll")
 	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
 	shcore   = windows.NewLazySystemDLL("shcore.dll")
+	gdi32    = windows.NewLazySystemDLL("gdi32.dll")
+	shell32  = windows.NewLazySystemDLL("shell32.dll")
 
 	// SendInput / physical key state (keyboard.go, mouse.go, probes.go).
 	procSendInput        = user32.NewProc("SendInput")
@@ -57,6 +59,32 @@ var (
 	// Named-pipe busy-retry (bridge_pipe.go's DialBridge). x/sys/windows
 	// does not wrap WaitNamedPipe.
 	procWaitNamedPipeW = kernel32.NewProc("WaitNamedPipeW")
+
+	// Window enumeration/focus/capture (windows.go, capture.go). Not
+	// wrapped by golang.org/x/sys/windows (ticket Codebase Findings).
+	procSetForegroundWindow  = user32.NewProc("SetForegroundWindow")
+	procShowWindow           = user32.NewProc("ShowWindow")
+	procGetWindowTextW       = user32.NewProc("GetWindowTextW")
+	procGetWindowTextLengthW = user32.NewProc("GetWindowTextLengthW")
+	procGetWindowLongPtrW    = user32.NewProc("GetWindowLongPtrW")
+	procAttachThreadInput    = user32.NewProc("AttachThreadInput")
+	procIsIconic             = user32.NewProc("IsIconic")
+	procPrintWindow          = user32.NewProc("PrintWindow")
+
+	// GDI capture family (capture.go).
+	procGetDC                  = user32.NewProc("GetDC")
+	procReleaseDC              = user32.NewProc("ReleaseDC")
+	procCreateCompatibleDC     = gdi32.NewProc("CreateCompatibleDC")
+	procCreateCompatibleBitmap = gdi32.NewProc("CreateCompatibleBitmap")
+	procSelectObject           = gdi32.NewProc("SelectObject")
+	procDeleteDC               = gdi32.NewProc("DeleteDC")
+	procDeleteObject           = gdi32.NewProc("DeleteObject")
+	procBitBlt                 = gdi32.NewProc("BitBlt")
+	procGetDIBits              = gdi32.NewProc("GetDIBits")
+
+	// open.go's ShellExecuteExW; x/sys/windows only wraps the simpler
+	// ShellExecuteW, not the Ex variant that yields hProcess.
+	procShellExecuteExW = shell32.NewProc("ShellExecuteExW")
 )
 
 // point32 is a Win32 POINT (LONG x, y) - GetCursorPos's out-param shape.
@@ -181,4 +209,37 @@ type keybdInputRecord struct {
 	typ     uint32
 	ki      keybdInput
 	padding uint64
+}
+
+// SEE_MASK_NOCLOSEPROCESS (shellapi.h) - ShellExecuteExW's fMask bit that
+// asks it to hand back hProcess (open.go needs the launched process's PID
+// for open[wait=]'s PID-then-basename window resolution). SW_SHOWNORMAL is
+// ShellExecuteExW's nShow.
+const (
+	seeMaskNocloseprocess = 0x00000040
+	swShownormal          = 1
+)
+
+// shellExecuteInfoW is a hand-rolled Win32 SHELLEXECUTEINFOW (shellapi.h);
+// x/sys/windows only wraps the simpler ShellExecuteW, not the Ex variant
+// this ticket needs for hProcess. Field order/types mirror the C struct
+// exactly so Go's natural (unpacked) alignment reproduces the real ABI
+// layout - ffi_test.go/exec_test.go pin its size (112 bytes on amd64) the
+// same way ffi.go's mouseInputRecord/keybdInputRecord sizes are pinned.
+type shellExecuteInfoW struct {
+	cbSize       uint32
+	fMask        uint32
+	hwnd         uintptr
+	lpVerb       *uint16
+	lpFile       *uint16
+	lpParameters *uint16
+	lpDirectory  *uint16
+	nShow        int32
+	hInstApp     uintptr
+	lpIDList     uintptr
+	lpClass      *uint16
+	hkeyClass    uintptr
+	dwHotKey     uint32
+	hIcon        uintptr
+	hProcess     uintptr
 }
