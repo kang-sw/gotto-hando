@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity
+    version="1.0.0.0"
+    processorArchitecture="amd64"
+    name="gotto-hando"
+    type="win32"
+  />
+  <!--
+    Per-Monitor-V2 DPI awareness (ticket Decisions: coordinates are
+    physical pixels via Per-Monitor-V2 DPI awareness). <dpiAwareness> in
+    the 2016 WindowsSettings namespace is the one real, documented manifest
+    element for this (Windows 10 1703+ reads "PerMonitorV2" directly; an
+    earlier attempt at also declaring a "dpiAwarenessContext" manifest
+    element here does not exist in Microsoft's schema and made the SxS
+    parser reject the whole manifest at process start with "the
+    application has failed to start because its side-by-side
+    configuration is incorrect" - confirmed on the verification box, see
+    the fix commit). The runtime SetProcessDpiAwarenessContext fallback in
+    internal/backend/windows/init.go covers a build where this manifest
+    step could not be regenerated - its failure is ignored precisely
+    because Per-Monitor-V2 already applies via THIS manifest.
+  -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <!--
+        cmd /C output decoding (help-windows.txt exec ON WINDOWS) reads the
+        console output code page at run time (GetConsoleOutputCP); this
+        activeCodePage element only affects THIS process's own narrow-API
+        default code page (e.g. argv parsing for non-UTF16 entry points),
+        which gotto-hando does not rely on (os.Args is already UTF-16-
+        decoded by the Go runtime) - declared anyway per ticket Decisions
+        as a forward-looking default for any future narrow-string API use.
+      -->
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+</assembly>
