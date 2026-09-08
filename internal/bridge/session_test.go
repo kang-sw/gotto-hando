@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -426,4 +427,47 @@ func TestHandleKeepGoingReachesEngineOverWire(t *testing.T) {
 			t.Errorf("events[2] = %+v, want ok/line=2 (keep_going reached the wire)", events[2])
 		}
 	})
+}
+
+// (f) a malformed request (unparsable JSON) gets Session.Handle's current,
+// deliberately non-JSONL response: a plain "malformed request: <err>\n"
+// line, then conn is closed - no "start"/"abort" JSONL events at all
+// (session.go: the decode happens before WriteStart is ever called). This
+// locks in the existing behavior with a test (review finding I2); it does
+// not change the response format.
+func TestHandleMalformedRequestGetsPlainTextNotJSONL(t *testing.T) {
+	be := &dryrun.Backend{}
+	sess := &bridge.Session{Backend: be}
+
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		sess.Handle(context.Background(), server)
+		close(done)
+	}()
+	go func() {
+		// Not valid JSON at all - ir.Unmarshal (decodeRequest's first step)
+		// fails immediately.
+		if _, err := client.Write([]byte("not json at all\n")); err != nil {
+			t.Logf("write malformed request: %v", err)
+		}
+	}()
+
+	resp, err := io.ReadAll(client)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	<-done
+
+	text := string(resp)
+	if !strings.HasPrefix(text, "malformed request: ") {
+		t.Fatalf("response = %q, want it to start with %q", text, "malformed request: ")
+	}
+	if !strings.HasSuffix(text, "\n") {
+		t.Fatalf("response = %q, want a trailing newline", text)
+	}
+	var probe map[string]any
+	if err := json.Unmarshal(resp, &probe); err == nil {
+		t.Fatalf("response = %q, want plain text, not valid JSON", text)
+	}
 }
