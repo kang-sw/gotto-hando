@@ -253,3 +253,99 @@ func TestExecNonZeroSoftenedByNoerr(t *testing.T) {
 		t.Fatalf("exit = %d, want 0", sum.Exit)
 	}
 }
+
+// TestPreflightAbortCarriesCode: run.go's Preflight wiring (260907-feat-
+// darwin-backend Phase 1) unwraps a *backend.PreflightError from
+// Backend.Preflight into Summary.Aborted/AbortCode/AbortMsg with
+// Exit==output.AbortExit(code) (here E_SESSION -> exit 4, help.txt EXIT
+// CODES). No line runs: Results/Done stay empty.
+func TestPreflightAbortCarriesCode(t *testing.T) {
+	seq := parse(t, "k[]a")
+	be := &dryrun.Backend{FailOn: func(call string) error {
+		if call == "Preflight" {
+			return &backend.PreflightError{Code: output.ESession, Msg: "no unlocked GUI session (session=locked)"}
+		}
+		return nil
+	}}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+
+	if !sum.Aborted {
+		t.Fatal("Aborted = false, want true")
+	}
+	if sum.AbortCode != output.ESession {
+		t.Fatalf("AbortCode = %s, want %s", sum.AbortCode, output.ESession)
+	}
+	if sum.AbortMsg != "no unlocked GUI session (session=locked)" {
+		t.Fatalf("AbortMsg = %q", sum.AbortMsg)
+	}
+	if sum.Exit != output.ExitPreflight {
+		t.Fatalf("Exit = %d, want %d", sum.Exit, output.ExitPreflight)
+	}
+	if len(sum.Results) != 0 {
+		t.Fatalf("Results = %v, want empty (aborted run touches no line)", sum.Results)
+	}
+	// The line after Preflight never reached the backend either.
+	for _, c := range be.Calls {
+		if c != "Preflight" {
+			t.Fatalf("unexpected call %q after an aborted Preflight; calls=%v", c, be.Calls)
+		}
+	}
+}
+
+// TestPreflightAbortUncodedErrorIsUnknown: a Preflight error that is not a
+// *backend.PreflightError still aborts (never runs a line), but with
+// E_UNKNOWN since there is no code to unwrap - and E_UNKNOWN still maps to
+// exit 4 (AbortExit's default case), not a distinct exit.
+func TestPreflightAbortUncodedErrorIsUnknown(t *testing.T) {
+	seq := parse(t, "k[]a")
+	be := &dryrun.Backend{FailOn: func(call string) error {
+		if call == "Preflight" {
+			return errors.New("dlopen CoreGraphics: boom")
+		}
+		return nil
+	}}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+
+	if !sum.Aborted {
+		t.Fatal("Aborted = false, want true")
+	}
+	if sum.AbortCode != output.EUnknown {
+		t.Fatalf("AbortCode = %s, want %s", sum.AbortCode, output.EUnknown)
+	}
+	if sum.Exit != output.ExitPreflight {
+		t.Fatalf("Exit = %d, want %d", sum.Exit, output.ExitPreflight)
+	}
+}
+
+// TestResolveBoundsFailureIsLineErrorNotAbort: an out-of-bounds r-frame
+// point fails only the ONE line with E_BOUNDS at run time (help.txt:262-
+// 268: r/w/% coordinates are checked "right before their line runs", not
+// during Preflight) - the run itself is not aborted, and exit is the
+// normal run-time-failure code (1), not the abort code (4).
+func TestResolveBoundsFailureIsLineErrorNotAbort(t *testing.T) {
+	seq := parse(t, "m[r]0,-40")
+	be := &dryrun.Backend{
+		MousePosResult: backend.Point{X: 0, Y: 0},
+		InfoResult:     backend.Info{DesktopX: 0, DesktopY: 0, DesktopW: 100, DesktopH: 100},
+	}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+
+	if sum.Aborted {
+		t.Fatal("Aborted = true, want false (a bounds failure is a line error, not an abort)")
+	}
+	if len(sum.Results) != 1 || sum.Results[0].Status != "err" {
+		t.Fatalf("Results = %+v, want a single err result", sum.Results)
+	}
+	if sum.Results[0].ErrCode != output.EBounds {
+		t.Fatalf("ErrCode = %s, want %s", sum.Results[0].ErrCode, output.EBounds)
+	}
+	if sum.Exit != output.ExitRuntimeFailure {
+		t.Fatalf("Exit = %d, want %d", sum.Exit, output.ExitRuntimeFailure)
+	}
+	// MouseMove must never have been called: resolve() failed first.
+	for _, c := range be.Calls {
+		if c == "MouseMove" || (len(c) >= 9 && c[:9] == "MouseMove") {
+			t.Fatalf("MouseMove should not have been called after a bounds failure; calls=%v", be.Calls)
+		}
+	}
+}

@@ -9,6 +9,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -32,6 +33,14 @@ type Summary struct {
 	Exit          int
 	OK, Err, Skip int
 	HeldReleased  int
+
+	// Aborted marks a Preflight failure (help.txt OUTPUT "Abort",
+	// :561-565): no line ran, Results/Done stay empty, and the caller
+	// prints the abort object instead (AbortCode/AbortMsg carry the
+	// details, Exit is already output.AbortExit(AbortCode)).
+	Aborted   bool
+	AbortCode output.ErrorCode
+	AbortMsg  string
 }
 
 type engineState struct {
@@ -60,6 +69,17 @@ var kindCmd = map[ir.Kind]string{
 // transient keys immediately (the per-op helpers do this via defer). The
 // exit code is 1 if any line failed, else 0.
 func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptions) Summary {
+	if err := be.Preflight(ctx, seq); err != nil {
+		var pfErr *backend.PreflightError
+		code := output.EUnknown
+		msg := err.Error()
+		if errors.As(err, &pfErr) {
+			code = pfErr.Code
+			msg = pfErr.Msg
+		}
+		return Summary{Aborted: true, AbortCode: code, AbortMsg: msg, Exit: output.AbortExit(code)}
+	}
+
 	st := &engineState{
 		be:      be,
 		delayMS: seq.Defaults.DelayMS,
@@ -68,6 +88,7 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 	}
 	var sum Summary
 	failed := false
+	runStart := time.Now()
 
 	for i := range seq.Ops {
 		op := &seq.Ops[i]
@@ -76,7 +97,9 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 			sum.Skip++
 			continue
 		}
+		opStart := time.Now()
 		r := st.execute(ctx, op)
+		r.TMS = time.Since(opStart).Milliseconds()
 		sum.Results = append(sum.Results, r)
 		switch r.Status {
 		case "err":
@@ -103,7 +126,8 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 		})
 	}
 
-	sum.Done = output.Done{OK: sum.OK, Err: sum.Err, Skip: sum.Skip, HeldReleased: n}
+	sum.Done = output.Done{OK: sum.OK, Err: sum.Err, Skip: sum.Skip, HeldReleased: n,
+		ElapsedMS: time.Since(runStart).Milliseconds()}
 	if failed {
 		sum.Exit = output.ExitRuntimeFailure
 	} else {
@@ -161,16 +185,16 @@ func (st *engineState) execute(ctx context.Context, op *ir.Op) output.Result {
 		}
 	case ir.KindMove:
 		if err := st.doMove(ctx, op); err != nil {
-			return fail(output.EInput, err.Error())
+			return fail(boundsAwareCode(err), err.Error())
 		}
 	case ir.KindClick:
 		if err := st.doClick(ctx, op); err != nil {
-			return fail(output.EInput, err.Error())
+			return fail(boundsAwareCode(err), err.Error())
 		}
 	case ir.KindButtonDown:
 		if op.HasPoint {
 			if err := st.doMoveTo(ctx, op.Point); err != nil {
-				return fail(output.EInput, err.Error())
+				return fail(boundsAwareCode(err), err.Error())
 			}
 		}
 		b := backend.Button(op.Button)
@@ -186,7 +210,7 @@ func (st *engineState) execute(ctx context.Context, op *ir.Op) output.Result {
 		st.held.releaseButton(b)
 	case ir.KindDrag:
 		if err := st.doDrag(ctx, op); err != nil {
-			return fail(output.EInput, err.Error())
+			return fail(boundsAwareCode(err), err.Error())
 		}
 	case ir.KindScroll:
 		if err := st.be.Scroll(ctx, backend.Dir(op.ScrollDir), op.Ticks, backend.ScrollUnit(op.ScrollBy)); err != nil {
@@ -244,20 +268,29 @@ func (st *engineState) execute(ctx context.Context, op *ir.Op) output.Result {
 			st.keyMS = *op.SetKeyms
 		}
 	case ir.KindQueryInfo:
-		if _, err := st.be.Info(ctx); err != nil {
+		info, err := st.be.Info(ctx)
+		if err != nil {
 			return fail(output.EUnknown, err.Error())
 		}
 		res.AlwaysShow = true
+		res.Detail = formatQueryInfo(info)
+		res.JSON = queryInfoJSON(info)
 	case ir.KindQueryDisp:
-		if _, err := st.be.Info(ctx); err != nil {
+		info, err := st.be.Info(ctx)
+		if err != nil {
 			return fail(output.EUnknown, err.Error())
 		}
 		res.AlwaysShow = true
+		res.Extra = formatQueryDisp(info)
+		res.JSON = queryDispJSON(info)
 	case ir.KindQueryMouse:
-		if _, err := st.be.MousePos(ctx); err != nil {
+		pos, err := st.be.MousePos(ctx)
+		if err != nil {
 			return fail(output.EUnknown, err.Error())
 		}
 		res.AlwaysShow = true
+		res.Extra = formatQueryMouse(pos)
+		res.JSON = queryMouseJSON(pos)
 	}
 	return res
 }
