@@ -216,28 +216,65 @@ func pipeWrite(h windows.Handle, p []byte) (int, error) {
 	return int(n), err
 }
 
+// nmpwaitWaitForever is WaitNamedPipe's nTimeOut sentinel for an indefinite
+// wait (winbase.h NMPWAIT_WAIT_FOREVER). A bridge run is bounded, so
+// blocking until an instance frees up (rather than a bounded retry budget)
+// matches help-remote.txt SESSION BRIDGE's "a second caller waits until the
+// first run has finished".
+const nmpwaitWaitForever = 0xFFFFFFFF
+
 // DialBridge connects to the named pipe (PipeName's return value) as a
 // client - the default implementation behind cmd/gotto-hando's local
-// forwarder's dialBridge seam (dispatch_windows.go's forwardToBridge). A
-// missing or busy pipe (no bridge running) surfaces as a plain error - the
-// caller maps that to abort E_SESSION with the "start `gotto-hando
-// --bridge` ..." hint (help-windows.txt :72-73).
+// forwarder's dialBridge seam (dispatch_windows.go's forwardToBridge).
+//
+// The pipe is a single instance (ListenBridge's maxInstances=1): while the
+// bridge is mid-Handle for another caller, CreateFile fails
+// ERROR_PIPE_BUSY - that means the bridge IS running, just occupied, so it
+// is not surfaced as an error here. Instead this blocks on WaitNamedPipe
+// until an instance frees up and retries CreateFile (a racing third caller
+// can re-BUSY it, hence the loop), giving the "one run at a time: a second
+// caller waits" contract (help-remote.txt SESSION BRIDGE) instead of the
+// wrong "bridge not running" hint. Any other CreateFile error (no pipe at
+// all - ERROR_FILE_NOT_FOUND and friends) is a genuine "no bridge running"
+// and is returned immediately: the caller maps that to abort E_SESSION
+// with the "start `gotto-hando --bridge` ..." hint (help-windows.txt
+// :72-73).
 func DialBridge(name string) (io.ReadWriteCloser, error) {
 	namePtr, err := windows.UTF16PtrFromString(name)
 	if err != nil {
 		return nil, err
 	}
-	h, err := windows.CreateFile(
-		namePtr,
-		windows.GENERIC_READ|windows.GENERIC_WRITE,
-		0,   // no sharing: this is a duplex byte-mode pipe, one client
-		nil, // default security, not inherited
-		windows.OPEN_EXISTING,
-		0,
-		0,
-	)
-	if err != nil {
-		return nil, err
+	for {
+		h, err := windows.CreateFile(
+			namePtr,
+			windows.GENERIC_READ|windows.GENERIC_WRITE,
+			0,   // no sharing: this is a duplex byte-mode pipe, one client
+			nil, // default security, not inherited
+			windows.OPEN_EXISTING,
+			0,
+			0,
+		)
+		if err == nil {
+			return &clientPipeConn{handle: h}, nil
+		}
+		if !errors.Is(err, windows.ERROR_PIPE_BUSY) {
+			return nil, err
+		}
+		if err := waitNamedPipe(namePtr); err != nil {
+			return nil, fmt.Errorf("bridge: WaitNamedPipe: %w", err)
+		}
 	}
-	return &clientPipeConn{handle: h}, nil
+}
+
+// waitNamedPipe blocks until an instance of the pipe named by namePtr is
+// available to connect to, or returns an error (e.g. the pipe was removed
+// while waiting). procWaitNamedPipeW.Call follows the standard BOOL-Win32
+// convention: a zero return means failure, and the accompanying error
+// (from GetLastError) is meaningful only in that case.
+func waitNamedPipe(namePtr *uint16) error {
+	r1, _, e1 := procWaitNamedPipeW.Call(uintptr(unsafe.Pointer(namePtr)), uintptr(nmpwaitWaitForever))
+	if r1 == 0 {
+		return e1
+	}
+	return nil
 }

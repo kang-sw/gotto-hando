@@ -53,6 +53,10 @@ var (
 	procGlobalLock       = kernel32.NewProc("GlobalLock")
 	procGlobalUnlock     = kernel32.NewProc("GlobalUnlock")
 	procGlobalFree       = kernel32.NewProc("GlobalFree")
+
+	// Named-pipe busy-retry (bridge_pipe.go's DialBridge). x/sys/windows
+	// does not wrap WaitNamedPipe.
+	procWaitNamedPipeW = kernel32.NewProc("WaitNamedPipeW")
 )
 
 // point32 is a Win32 POINT (LONG x, y) - GetCursorPos's out-param shape.
