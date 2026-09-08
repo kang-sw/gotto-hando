@@ -55,6 +55,23 @@ type Info struct {
 	Displays int
 	Session  string // active | bridge | locked | inactive
 	Perms    string
+
+	// DisplayList is the qdisp answer (help.txt:576-586, :433): one entry
+	// per display in 0-based "qdisp order" (the same order m[disp=N] /
+	// cap[disp=N] address, help.txt:253). Not part of the qinfo one-line
+	// summary (Displays carries the count there); only used to build
+	// qdisp's continuation lines and the disp=N runtime/preflight bounds
+	// checks (COORDINATES, help.txt:262-268).
+	DisplayList []DisplayGeom
+}
+
+// DisplayGeom is one display's geometry for qdisp / disp=N bounds checks
+// (help-macos.txt:222-232: origin, size, scale; primary is qdisp's
+// trailing flag).
+type DisplayGeom struct {
+	X, Y, W, H int
+	Scale      float64
+	Primary    bool
 }
 
 // Window is one visible window (help.txt:577, :587).

@@ -25,7 +25,7 @@ func loadGolden(t *testing.T, name string) string {
 // (help.txt:117-133) through WriteResult/WriteDone.
 func TestPlainQuickStartTranscript(t *testing.T) {
 	var buf bytes.Buffer
-	mustWrite(t, writeStart(&buf, false, "local", "/tmp/gh/"))
+	mustWrite(t, WriteStart(&buf, false, "local", "/tmp/gh/"))
 	results := []Result{
 		{Line: 1, Status: "ok", Cmd: "win", Detail: `id=771 app=Safari matched=1 0,25 1440x875 "Start Page"`},
 		{Line: 2, Status: "ok", Cmd: "k"},
@@ -49,7 +49,7 @@ func TestPlainQuickStartTranscript(t *testing.T) {
 // line and a skip line.
 func TestPlainOutputSectionTranscript(t *testing.T) {
 	var buf bytes.Buffer
-	mustWrite(t, writeStart(&buf, false, "local", "/tmp/gh/"))
+	mustWrite(t, WriteStart(&buf, false, "local", "/tmp/gh/"))
 	results := []Result{
 		{Line: 1, Status: "ok", Cmd: "win", Detail: `id=2314 app=Blender matched=1 0,25 1440x875 "Untitled - Blender"`},
 		{Line: 2, Status: "ok", Cmd: "k"},
@@ -108,7 +108,7 @@ func TestPlainQuietOmitsOkExceptQueriesAndCaptures(t *testing.T) {
 // no t_ms).
 func TestJSONLTranscript(t *testing.T) {
 	var buf bytes.Buffer
-	mustWrite(t, writeStart(&buf, true, "local", "/tmp/gh/"))
+	mustWrite(t, WriteStart(&buf, true, "local", "/tmp/gh/"))
 	results := []Result{
 		{
 			Line: 4, Status: "ok", Cmd: "cap", TMS: 312,
