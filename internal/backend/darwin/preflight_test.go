@@ -241,3 +241,26 @@ func TestPreflightWindowOpsPassWithoutScreenRecording(t *testing.T) {
 		t.Fatalf("Preflight() = %v, want nil (screen gate is cap-only; qwin/win run without Screen Recording)", err)
 	}
 }
+
+// open[wait=] is Accessibility-gated like win/k/etc (help-macos.txt CHECK:
+// "perms=accessibility:* gates ... window control (win, open[wait=])"), now
+// that op.HasWait is actually wired (Phase 3 step 1 fix) - Preflight's
+// accessibilityGated check reads `op.Kind == ir.KindOpen && op.HasWait`.
+func TestPreflightOpenWaitRequiresAccessibility(t *testing.T) {
+	b := newTestBackend(t, "active", false, false, false)
+	seq := seqOf(ir.Op{Kind: ir.KindOpen, Target: "TextEdit", HasWait: true, WaitMS: 5000})
+	code := preflightCode(t, b.Preflight(context.Background(), seq))
+	if code != output.EPermission {
+		t.Errorf("code = %s, want %s", code, output.EPermission)
+	}
+}
+
+// open without wait= needs no Accessibility (ticket Decision: "clip, qclip,
+// exec, open (without wait=) need no permission").
+func TestPreflightOpenWithoutWaitNeedsNoAccessibility(t *testing.T) {
+	b := newTestBackend(t, "active", false, false, false)
+	seq := seqOf(ir.Op{Kind: ir.KindOpen, Target: "TextEdit"})
+	if err := b.Preflight(context.Background(), seq); err != nil {
+		t.Fatalf("Preflight() = %v, want nil (open without wait= needs no Accessibility)", err)
+	}
+}

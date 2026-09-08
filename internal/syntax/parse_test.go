@@ -252,3 +252,34 @@ func TestMouseHeldBalance(t *testing.T) {
 		})
 	}
 }
+
+// TestHasWaitSet is the Phase 3 regression for a confirmed latent bug: win's
+// plSelector case and open's plTarget case both computed op.WaitMS from
+// wait= but never set op.HasWait, so win[wait=]/open[wait=] silently
+// behaved like no wait= was given at all (win's doFocus poll gate and
+// open's Accessibility preflight gate both read op.HasWait). win[wait=5s]
+// and open[wait=5s] must set HasWait true; a bare win[]/open[] (no wait=)
+// must leave it false.
+func TestHasWaitSet(t *testing.T) {
+	cases := []struct {
+		line string
+		want bool
+	}{
+		{"win[wait=5s]Safari", true},
+		{"win[]Safari", false},
+		{"open[wait=5s]TextEdit", true},
+		{"open[]TextEdit", false},
+	}
+	for _, tc := range cases {
+		seq, diags := syntax.Parse([]string{tc.line}, defaults)
+		if len(diags) != 0 {
+			t.Fatalf("line %q should parse, got %+v", tc.line, diags)
+		}
+		if len(seq.Ops) != 1 {
+			t.Fatalf("line %q: got %d ops, want 1", tc.line, len(seq.Ops))
+		}
+		if got := seq.Ops[0].HasWait; got != tc.want {
+			t.Errorf("line %q: HasWait = %v, want %v", tc.line, got, tc.want)
+		}
+	}
+}

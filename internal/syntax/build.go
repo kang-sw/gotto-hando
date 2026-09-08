@@ -141,6 +141,8 @@ func buildOp(line int, src string, spec cmdSpec, m modSet, payload string, paylo
 			return nil, syntaxDiag(line, payloadCol, src, "win requires a selector")
 		}
 		op.Selector = parseSelector(trimmed, m.flags['r'])
+		_, hasWait := m.kvs["wait"]
+		op.HasWait = hasWait
 		w, d := durVal(line, src, m, "wait", 0)
 		if d != nil {
 			return nil, d
@@ -161,6 +163,8 @@ func buildOp(line int, src string, spec cmdSpec, m modSet, payload string, paylo
 			return nil, syntaxDiag(line, payloadCol, src, "open requires an app or path")
 		}
 		op.Target = trimmed
+		_, hasWait := m.kvs["wait"]
+		op.HasWait = hasWait
 		w, d := durVal(line, src, m, "wait", 0)
 		if d != nil {
 			return nil, d
