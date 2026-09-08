@@ -64,6 +64,7 @@ func decodeOp(raw json.RawMessage) (Op, error) {
 		var f struct {
 			Selector jsonSelector `json:"selector"`
 			WaitMS   int          `json:"wait_ms"`
+			HasWait  bool         `json:"has_wait"`
 		}
 		if err := json.Unmarshal(raw, &f); err != nil {
 			return Op{}, fmt.Errorf("ir: decode focus: %w", err)
@@ -71,6 +72,7 @@ func decodeOp(raw json.RawMessage) (Op, error) {
 		o.Kind = KindFocus
 		o.Selector = f.Selector.toSelector()
 		o.WaitMS = f.WaitMS
+		o.HasWait = f.HasWait
 	case KindQueryWindows:
 		var f struct {
 			Selector jsonSelector `json:"selector"`
@@ -230,14 +232,16 @@ func decodeOp(raw json.RawMessage) (Op, error) {
 		o.ScrollDir, o.Ticks, o.ScrollBy = f.Dir, f.Ticks, f.By
 	case KindOpen:
 		var f struct {
-			Target string `json:"target"`
-			WaitMS int    `json:"wait_ms"`
+			Target  string `json:"target"`
+			WaitMS  int    `json:"wait_ms"`
+			HasWait bool   `json:"has_wait"`
 		}
 		if err := json.Unmarshal(raw, &f); err != nil {
 			return Op{}, fmt.Errorf("ir: decode open: %w", err)
 		}
 		o.Kind = KindOpen
 		o.Target, o.WaitMS = f.Target, f.WaitMS
+		o.HasWait = f.HasWait
 	case KindExec:
 		var f struct {
 			Shell     bool     `json:"shell"`
