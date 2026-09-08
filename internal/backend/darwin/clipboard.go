@@ -4,6 +4,7 @@ package darwin
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/ebitengine/purego"
@@ -43,6 +44,12 @@ func initClipboard() {
 	})
 }
 
+// errClipboardSetFailed is ClipboardSet's failure sentinel
+// (help.txt:353-355: "If setting the clipboard fails no key is sent
+// (E_CLIPBOARD)"). run.go's KindClipboard/KindPaste cases map any
+// ClipboardSet error to output.EClipboard.
+var errClipboardSetFailed = errors.New("NSPasteboard setString:forType: returned false")
+
 // ClipboardSet sets the target's clipboard (help.txt:352-354: clip/paste).
 func (b *Backend) ClipboardSet(ctx context.Context, s string) error {
 	initClipboard()
@@ -52,7 +59,12 @@ func (b *Backend) ClipboardSet(ctx context.Context, s string) error {
 	defer cfRelease(typ)
 	str := cfString(s)
 	defer cfRelease(str)
-	pb.Send(selSetStringForType, objc.ID(str), objc.ID(typ))
+	// setString:forType: returns a BOOL; checking it (rather than
+	// discarding the Send result) is what makes help.txt's documented
+	// paste E_CLIPBOARD-before-keys failure path reachable at all.
+	if ok := objc.Send[bool](pb, selSetStringForType, objc.ID(str), objc.ID(typ)); !ok {
+		return errClipboardSetFailed
+	}
 	return nil
 }
 
