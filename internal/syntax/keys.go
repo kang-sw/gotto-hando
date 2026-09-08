@@ -1,6 +1,9 @@
 package syntax
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // keyNames is the KEY NAMES table (help.txt:448-458). Ranges (a-z, 0-9,
 // f1-f24, numpad0-9) and the |-alias groups are expanded below. The map
@@ -23,10 +26,10 @@ func buildKeyNames() map[string]string {
 		add(string(d))
 	}
 	for i := 1; i <= 24; i++ {
-		add("f" + itoa(i))
+		add("f" + strconv.Itoa(i))
 	}
 	for i := 0; i <= 9; i++ {
-		add("numpad" + itoa(i))
+		add("numpad" + strconv.Itoa(i))
 	}
 	add("ctrl")
 	add("shift")
@@ -95,15 +98,3 @@ var flagSymbol = map[rune]string{
 // flagOrder is the canonical press order c, s, a, m/p (help.txt:228); the
 // IR mods list follows it.
 var flagOrder = []rune{'c', 's', 'a', 'm', 'p'}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
-}

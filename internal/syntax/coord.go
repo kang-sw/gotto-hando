@@ -1,11 +1,31 @@
 package syntax
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
 	"github.com/kang-sw/gotto-hando/internal/ir"
 )
+
+// parseFinite parses a COORDINATES number: an integer or decimal
+// (help.txt:247). Unlike strconv.ParseFloat it rejects NaN, Inf and
+// scientific notation, which are outside the grammar and which --check
+// number-format validation must reject (matching DURATIONS, which already
+// rejects NaN/Inf). ok is false on a malformed value.
+func parseFinite(s string) (float64, bool) {
+	t := strings.TrimSpace(s)
+	if strings.ContainsAny(t, "eEpPxX") {
+		// scientific/hex float notation (e.g. 1e3, 0x1p4): outside the
+		// integers-or-decimals grammar.
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(t, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return f, true
+}
 
 // parseCoord parses one COORDINATES coord (help.txt:200, :245-268):
 // [ "-" ] number [ "%" ]. It returns the value, whether a percent suffix
@@ -19,8 +39,8 @@ func parseCoord(s string) (val float64, pct bool, msg string) {
 		pct = true
 		t = t[:len(t)-1]
 	}
-	f, err := strconv.ParseFloat(t, 64)
-	if err != nil {
+	f, ok := parseFinite(t)
+	if !ok {
 		return 0, false, "invalid coordinate " + strconv.Quote(s)
 	}
 	return f, pct, ""
@@ -80,12 +100,12 @@ func parseRect(s string) (*ir.Rect, string) {
 	if msg != "" {
 		return nil, msg
 	}
-	w, err := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
-	if err != nil {
+	w, ok := parseFinite(parts[2])
+	if !ok {
 		return nil, "invalid rect width"
 	}
-	h, err := strconv.ParseFloat(strings.TrimSpace(parts[3]), 64)
-	if err != nil {
+	h, ok := parseFinite(parts[3])
+	if !ok {
 		return nil, "invalid rect height"
 	}
 	return &ir.Rect{X: x, Y: y, W: w, H: h, XPct: xpct, YPct: ypct}, ""

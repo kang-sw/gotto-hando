@@ -24,7 +24,7 @@ import (
 //     including blank/comment lines), exit 0.
 //   - --ir success: stdout the IR JSON document, exit 0.
 func analyze(opts parsedOptions, lines []string, stdout, stderr io.Writer) int {
-	defaults := ir.Defaults{DelayMS: 100, TextIntervalMS: 0, KeyGapMS: 30}
+	defaults := ir.DefaultState()
 	if opts.Delay != "" {
 		if ms, ok := syntax.ParseDurationMS(opts.Delay); ok {
 			defaults.DelayMS = ms

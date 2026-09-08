@@ -60,6 +60,26 @@ type Defaults struct {
 	KeyGapMS       int
 }
 
+// STATE MACHINE initial defaults (help.txt:502-517): the values in effect
+// before any --delay override or set command. Named here so every caller
+// (the CLI --check/--ir path today, the darwin/windows local run path in a
+// later ticket) shares one source instead of re-inlining the literals.
+const (
+	DefaultDelayMS        = 100 // delay before each acting line
+	DefaultTextIntervalMS = 0   // txt per-character interval
+	DefaultKeyGapMS       = 30  // k gap between key presses
+)
+
+// DefaultState returns the STATE MACHINE initial Defaults (before --delay
+// or set changes them).
+func DefaultState() Defaults {
+	return Defaults{
+		DelayMS:        DefaultDelayMS,
+		TextIntervalMS: DefaultTextIntervalMS,
+		KeyGapMS:       DefaultKeyGapMS,
+	}
+}
+
 // Selector is a WINDOW SELECTOR (help.txt:286-297, IR :634): the kind
 // (id, pid, app, title), the raw value, and whether the title value is an
 // RE2 regex (the r flag).
@@ -115,10 +135,15 @@ type Op struct {
 
 	// text / clipboard / paste / query_clipboard
 	Text       string
-	IntervalMS int    // txt interval / paste settle
-	HasText    bool   // whether Text is meaningful (post-inline)
-	FromFile   bool   // f flag was given
-	FilePath   string // local file path before the inline pass (not serialized)
+	IntervalMS int  // txt interval / paste settle
+	HasText    bool // whether Text is meaningful (post-inline)
+	FromFile   bool // f flag was given
+	// FilePath is a LOCAL file path the wire IR never carries (paths are a
+	// local concern, help.txt:669-671). For txt/paste/clip[f] it is the
+	// input file inlined into Text by the inline pass; for qclip[f] it is
+	// the output path the local writer saves the clipboard to. Not
+	// serialized.
+	FilePath string
 
 	// move / click / button_down / drag
 	Point      Point

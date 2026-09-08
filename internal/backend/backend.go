@@ -85,6 +85,11 @@ type ExecResult struct {
 	Stdout    string
 	Stderr    string
 	Truncated bool
+	// TimedOut reports that the timeout= deadline killed the process
+	// (help.txt:390-391). The engine maps it to E_TIMEOUT, which noerr
+	// never softens (help.txt:536); it is distinct from a non-zero Exit,
+	// which noerr does soften.
+	TimedOut bool
 }
 
 // CaptureReq is a resolved capture request (help.txt:400-417). Frame is

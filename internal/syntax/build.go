@@ -49,6 +49,14 @@ func buildOp(line int, src string, spec cmdSpec, m modSet, payload string, paylo
 
 	case plQclip:
 		op.FromFile = m.flags['f']
+		if op.FromFile {
+			// qclip[f]<path> saves the clipboard to a LOCAL file
+			// (help.txt:353-354). The path is a local concern the wire IR
+			// omits (help.txt:669-671, "to_file" only), but the future
+			// local writer needs it, so keep it on the non-serialized
+			// FilePath field.
+			op.FilePath = trimmed
+		}
 		return op, nil
 
 	case plPoint:
@@ -362,8 +370,8 @@ func buildCap(line int, src string, m modSet, frame string, disp int, op *ir.Op)
 		if v == "native" {
 			op.ScaleNative = true
 		} else {
-			f, err := strconv.ParseFloat(v, 64)
-			if err != nil {
+			f, ok := parseFinite(v)
+			if !ok {
 				return nil, syntaxDiag(line, m.col["kv:scale"], src, "scale must be a number or native")
 			}
 			op.Scale = f

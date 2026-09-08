@@ -136,11 +136,17 @@ func (st *engineState) execute(ctx context.Context, op *ir.Op) output.Result {
 			return fail(output.EInput, err.Error())
 		}
 	case ir.KindKeyDown:
+		var pressed []string
 		for _, ch := range op.Keys {
 			if err := st.be.KeyDown(ctx, ch[0]); err != nil {
+				// The failed line's own keys are released immediately so
+				// held state stays consistent (help.txt:531-532), rather
+				// than lingering in held until end-of-run releaseAll.
+				st.rollbackKeys(ctx, pressed)
 				return fail(output.EInput, err.Error())
 			}
 			st.held.pressKey(ch[0], op.Line, op.Src)
+			pressed = append(pressed, ch[0])
 		}
 	case ir.KindKeyUp:
 		for _, ch := range op.Keys {
@@ -283,12 +289,28 @@ func (st *engineState) doExec(ctx context.Context, op *ir.Op, res output.Result,
 	if err != nil {
 		return fail(output.EExec, err.Error())
 	}
+	// timeout expiry is E_TIMEOUT and noerr never softens it (help.txt:390,
+	// :536); it is checked before the exit-code softening below.
+	if r.TimedOut {
+		return fail(output.ETimeout, fmt.Sprintf("exec timed out after %s", req.Timeout))
+	}
 	if r.Exit != 0 && !op.Noerr {
 		return fail(output.EExec, fmt.Sprintf("exit=%d", r.Exit))
 	}
 	res.Detail = fmt.Sprintf("exit=%d", r.Exit)
 	res.AlwaysShow = true
 	return res
+}
+
+// rollbackKeys releases keys a single kd line already pressed before it
+// failed partway, in reverse order, and drops them from held state. It
+// implements the -k "keys taken by the failed line are released
+// immediately" clause (help.txt:531-532).
+func (st *engineState) rollbackKeys(ctx context.Context, keys []string) {
+	for i := len(keys) - 1; i >= 0; i-- {
+		_ = st.be.KeyUp(ctx, keys[i])
+		st.held.releaseKey(keys[i])
+	}
 }
 
 func (st *engineState) pressPrimaryV(ctx context.Context) error {

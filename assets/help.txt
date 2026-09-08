@@ -668,6 +668,14 @@ grep for it.
       ],
       "defaults": {"delay_ms": 100, "text_interval_ms": 0, "key_gap_ms": 30}
     }
+    - The example shows one line per op kind and does not exercise every
+      field. Each op serializes exactly the fields its own modifiers and
+      payload require, so beyond the example a line may also carry:
+      "line_delay_ms" (a d= per-line delay override, any op); "display" on
+      a point or capture (a disp=N display frame); "settle_ms" (paste);
+      "to_file" (qclip[f]); "dir"/"ticks"/"by" (scroll); and
+      "points"/"steps" (drag). A field the example omits is unused by that
+      example line, not optional to the contract.
     - Every op keeps "line" and "src" for error reporting.
     - "keys" is a list of chords: k[]ctrl+shift+a b ->
       [["ctrl","shift","a"],["b"]].
