@@ -252,6 +252,114 @@ preflight with `abort` E_PERMISSION; `--request-perms` on a fresh signing
 identity triggers the system prompt; the Makefile target re-signs the binary
 and `codesign -dv` shows `Authority=gotto-hando-dev`.
 
+### Result (a5e3dba) - 2026-09-08
+
+Phase 2 implements `win`, `qwin`, `cap`, `w`-frame bounds, `scroll by=page`
+at the current window's height, the Screen-Recording-gated `cap` preflight
+check, `--request-perms` (darwin), and the dev codesigning script/Makefile.
+Window enumeration (`internal/backend/darwin/windows.go`) uses
+`CGWindowListCopyWindowInfo` filtered to layer-0 regular-activation-policy
+windows, correlated per-pid to the Accessibility API
+(`AXUIElementCreateApplication` + `kAXWindows`/`kAXMinimized`/`kAXPosition`/
+`kAXSize`) by title+position for the `min` flag and for raise/unminimize/
+focus; `Focus` sets `kAXMinimized=false`, performs `kAXRaise`, and activates
+the app frontmost. Capture (`capture.go`) grabs raw pixels via
+`CGDisplayCreateImage` (desktop/`disp=`/`rect=`) and `CGWindowListCreateImage`
+with `kCGWindowImageBoundsIgnoreFraming` (`cap[w]`, tight to window bounds),
+converts BGRA->RGBA in a pure `bgraToRGBA` helper, and returns
+`backend.Image` raw pixels only. Screen Recording is a cap-only 6th preflight
+check layered onto Phase 1's five (via the Phase-1 `permissionProbe.
+ScreenRecording()` seam), `E_PERMISSION` on failure; `qwin`/`win` still run
+with empty titles when it is missing.
+
+Shared engine infra landed here is GOOS-agnostic so the later windows Phase 2
+reuses it without a fork: `internal/engine/schedule.go` (clock seam,
+`pollForWindow` 100ms->`E_NOWINDOW`, `runFrameSeries` absolute-deadline burst
++ slippage), `internal/engine/capture.go` (`encodePNG` via `image/png`,
+capture-path building, file / `--inline-captures` base64 write, cap-on-error),
+`internal/engine/compose.go` (`w`-frame bounds, `pageHeight`, `currentWindow`
+via `Windows()` Focused==true), and `internal/engine/query.go`
+(`formatQueryWindows`/`queryWindowsJSON`/`focusJSON`). Per the ticket
+Decision the backend returns raw pixels and never encodes/writes; PNG
+encoding + path/write live in the engine, `--inline-captures`/`OutDir` thread
+through `engine.RunOptions` from the CLI. One authorized `Backend` interface
+change: `Scroll` gained `pageHeightPixels int` (resolved once in
+`engine.pageHeight()`: focused-window height, else primary display, else a
+900px fallback), updated in lockstep across darwin, the windows stub
+(accepted-unused; Windows scrolls in wheel notches), and dryrun.
+
+Deliberate pattern note (fit review): the plan's step-14 `windowProbe`
+test-seam was not added; instead the FFI-free logic (`filterWindows`/
+`selectorMatches` in `windows.go`, `captureRect`/`scaledDims`/`bgraToRGBA` in
+`capture.go`) was extracted into pure functions and unit-tested directly,
+which is a lighter seam than mocking `CGWindowListCopyWindowInfo`'s
+CFDictionary-array shape - the same "the function is the seam" reasoning the
+plan itself accepted for the capture-permission gate. A future windows Phase
+2 mirrors this pure-function split.
+
+Verification (safe subset, run this phase; interactive subset deferred to the
+HOME-VERIFICATION CHECKLIST below): `go build ./...`, `go vet ./...`, and
+`go test ./... -race` all green natively on the Mac; new pure-logic unit
+tests cover selector matching (id/pid/app/title-substring/regex, z-order),
+qwin format + `win`/`E_NOWINDOW`, `cap` rect/`w`/`disp=` geometry + `E_BOUNDS`,
+frame-series absolute-deadline no-drift + slippage (fake clock),
+`pollForWindow` cadence/timeout (fake clock), `bgraToRGBA` color-order/stride
+(synthetic BGRA incl. a premultiplied pixel), the PNG encode->decode round
+trip, `doCapture` orchestration (file written, JSONL path/data+fmt/frames,
+`E_NOWINDOW`/`E_BOUNDS`/`E_CAPTURE` mapping), the `resolve()` window-frame +
+`currentWindow` fallback + `pageHeight` threading, and the Screen-Recording
+preflight gate (cap-only). `local qdisp` and `local --request-perms` smoke
+run without crashing (this dev Mac is headless/screen-locked, so
+`CGGetActiveDisplayList` returns none and perms read missing - the
+documented environment, matching Phase 1). The codesign script + `make
+dev-sign` build and run, but signing fails with `gotto-hando-dev: no identity
+found` (no such self-signed identity in this Keychain) - an environment
+prerequisite (help-macos.txt STABLE SIGNING IDENTITY step 1), not a code
+defect.
+
+Review: no Critical. One correctness Important (`cap[w]` included drop-shadow
+framing so its dims/origin/nativeScale did not match `qwin`) fixed with
+`kCGWindowImageBoundsIgnoreFraming`; four test-coverage Important (BGRA->RGBA
+swap, `doCapture` orchestration, `resolve()` window/`pageHeight`, the Screen-
+Recording gate - all new GOOS-agnostic logic testable headless) closed with
+17 new tests; one Minor fixed (`cap[w]` with no window now maps to
+`E_NOWINDOW`, consistent with `c[w]`/`m[w]`, via a new `backend.ErrNoWindow`
+sentinel). Minors left as record-only: forced-opaque premultiply darkening on
+rounded window corners (v1-acceptable), inline-burst frame0 header/continuation
+duplication (matches the qwin/exec convention), `-%02d` suffix width for
+n>=100 (cosmetic), `--request-perms` test's {0,4} tolerance (non-deterministic
+env).
+
+Deviations: `internal/backend/darwin/ffi.go` reformatted by `gofmt` (drift
+from an earlier edit); `.gitignore` gained `/gotto-hando` (the new Makefile
+emits it); `internal/syntax/build.go` `buildCap` now wires the explicit-path
+payload (`cap[]./shot.png`) into `op.FilePath`, which `doCapture` already
+honored (a latent gap surfaced this phase).
+
+HOME-VERIFICATION CHECKLIST (run once, in an unlocked GUI session with Screen
+Recording + Accessibility granted; a self-signed `gotto-hando-dev` identity in
+Keychain for the signing step):
+- `gotto-hando local 'cap'` / `cap[w]` / `cap[disp=1]` / `cap[rect=...]`:
+  output dimensions/origin match `qdisp`/`qwin` on a Retina + external display
+  (verifies the `kCGWindowImageBoundsIgnoreFraming` tightening and nativeScale).
+- `gotto-hando local 'win[]<minimized-app-title>'`: restores (unminimize) +
+  raises + activates it frontmost.
+- `gotto-hando local 'win[wait=5s]<title>'` on a window appearing ~2s later
+  succeeds; on one that never appears returns `E_NOWINDOW` after ~5s.
+- Revoke Screen Recording: `qwin`/`win` run with empty titles (status ok);
+  `cap` fails preflight with `abort` `E_PERMISSION`; `qinfo` shows
+  `screen:missing`.
+- `gotto-hando local --request-perms` on a fresh identity triggers the
+  Accessibility + Screen Recording system prompts; check the printed `perms=`
+  line and exit code before and after granting.
+- Two windows of the same app with identical titles: confirm the AX/CG
+  title+position correlation reports `matched=2` (degrades gracefully, no
+  silent misbehavior) and `qwin`'s `min`/`hidden` flags stay correct.
+- `scroll[by=page]` inside a focused window scrolls one window-height page
+  (not the display height).
+- `scripts/codesign-dev.sh` (or `make dev-sign`): `codesign -dv` shows
+  `Authority=gotto-hando-dev`.
+
 ### Phase 3: exec and open
 
 Depends on Phase 2. Goals: `exec` (argv split with `"..."` only, `shell`
