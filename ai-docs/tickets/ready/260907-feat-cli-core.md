@@ -190,6 +190,58 @@ tests for each syntax error class mapped to exit 2 and the E_SYNTAX message
 format; `--ir` golden test against the IR JSON example; engine tests with the
 dry-run backend covering fail-fast, `-k`, held-key release and `done` counts.
 
+### Result (d01114f) - 2026-09-08
+
+Built the parser/IR/engine core. `internal/ir` (23 op kinds, ordered `--ir`
+serializer matching help.txt `== IR JSON ==`, static validation + LIMITS),
+`internal/syntax` (pure text->IR parser: line-shape dispatch, kv-vs-flag
+tokenizer, per-command modifier allow-lists and payload grammars, TEXT
+ESCAPES, coordinates, durations, KEY NAMES, selectors; a separate post-parse
+`[f]` inline pass), `internal/backend` (thin `Backend` interface per CONCEPT
+ch.8.2 + a test-only `dryrun` backend never imported by `cmd/`), and
+`internal/engine` (composes primitives, held tracking with reverse release,
+delay precedence d= > set[delay=] > --delay > 100ms, fail-fast / -k policy).
+`--check`/`--ir` are wired; every real-execution destination (including
+`local`) still exits 2 this phase - the engine and backend are exercised only
+through Go tests. Normative help.txt edits landed with the code: the
+parse/validation failure contract in `== EXECUTION ==` (empty stdout on exit
+2 in both modes, one `<CODE> line n col c: msg` + indented source per error,
+all errors before exit; `ok <n> lines` / IR JSON on success) and an
+`== IR JSON ==` note enumerating the per-op fields the 9-op example does not
+exercise.
+
+IR additions beyond the example (documented in help.txt this phase):
+`line_delay_ms` (present when `d=` given) and `display` (disp=N frames), plus
+the ordinary per-op fields (settle_ms, to_file, scroll dir/ticks/by, drag
+points/steps). A non-serialized `Op.FilePath` preserves the `qclip[f]` local
+output path for the future local writer without touching the wire IR.
+
+Review: fit raised 1 Important (added IR fields undocumented in the help.txt
+contract) - fixed by the `== IR JSON ==` edit; test raised 3 Important
+coverage gaps (bad-coord/bad-selector negatives, md/mu + held-balance, -k
+immediate release) - all fixed; correctness clean with 7 minor. Two real
+bugs found and fixed with mutation-verified regression tests: under -k a
+partially-failed kd/md line now releases its keys immediately (help.txt
+ERROR POLICY), and NaN/Inf/scientific are now rejected for coordinates and
+cap scale (was observable via `--check 'cap[scale=NaN]'`). Backend
+`ExecResult` gained a `TimedOut` signal so a real backend can map exec
+timeout to E_TIMEOUT (noerr does not soften it). `go build`/`go vet`/`go
+test ./...` clean; `--help` byte-identical to the edited asset.
+
+Forward gaps (deferred to the backend tickets, not bugs this phase):
+- display-frame resolution needs per-display geometry that `backend.Info`
+  does not yet carry; it currently resolves disp=N against desktop bounds.
+  The darwin/windows backends must add per-display rects (from qdisp) and
+  make the engine resolve the `display` frame against them.
+- `n=` has no LIMITS bound (help.txt defines none), so `k[n=0]`/`k[n=-3]`
+  parse and the engine no-ops the loop; and the 64 KiB line-length check
+  only fires on lines that produce an op, so an oversized comment/blank line
+  is unchecked. Revisit if a bound is ever defined.
+
+Forward: Phase 3 adds drift tests (a)-(f) and, at ticket closeout, the four
+pointer spec files. A later backend ticket wires the engine into the `local`
+run path (still exit 2 today).
+
 ### Phase 3: Help drift tests
 
 Depends on Phase 2. Goals: tests that fail when code and help text diverge:
