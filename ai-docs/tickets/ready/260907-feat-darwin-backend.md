@@ -185,6 +185,52 @@ granted): `k`/`txt`/`m`/`c`/`drag`/`scroll`/`clip`/`paste` against TextEdit,
 plus `qinfo`/`qdisp`/`qmouse` output checked against System Settings >
 Displays.
 
+### Result (787b2f2) - 2026-09-08
+
+`internal/backend/darwin` (purego, `CGO_ENABLED=0`) implements the Phase 1
+command set: `k kd ku txt m c md mu drag scroll clip paste qclip qmouse
+qdisp qinfo sleep set`, session/lock detection, the five-check preflight
+gate in the Constraints order, `r`/`%`/`disp=` bounds handling, Secure Input
+as a run-time `E_INPUT`, and the KEY NAMES keycode table (`volup`/`voldown`/
+`mute` rejected). `backend.PreflightError` carries an `output.ErrorCode`;
+`engine.Run` calls `Preflight` first and maps the coded error to the `abort`
+object (non-coded -> `E_UNKNOWN`, exit 4). `cmd/gotto-hando` dispatches
+`local` through the darwin backend behind `runtime.GOOS=="darwin"` via a
+`dispatch_darwin.go`/`dispatch_other.go` factory pair; other GOOS keep the
+exit-2 stub.
+
+Verification (lock-independent subset - the dev Mac was screen-locked and
+remote): `go test ./... -race` green, `go vet ./...` clean, cross-compile
+`darwin/amd64`+`darwin/arm64` clean, and CLI end-to-end `local qinfo`/`qdisp`/
+`qmouse` printed live values (`session=locked`) with `local 'k[]a'` aborting
+`E_SESSION` (exit 4).
+
+Review: one Critical (disp=N ignored the display origin in both `resolve()`
+and preflight check 4) fixed and cleared by a Critical-scoped re-review;
+three Important (horizontal-scroll arm64 C-variadic ABI, `scroll by=page`
+pixel units, `query.go` formatting coverage) fixed; two Minor fixed
+(`ClipboardSet` now surfaces `setString:forType:` failure so the `E_CLIPBOARD`
+paste path is reachable; `go mod tidy`), two Minor accepted as-is
+(`displayScale`'s unused Phase-2 param, `UniCharCount` width).
+
+Deviations: the `go` directive moved 1.23 -> 1.25.0 (forced by
+`github.com/ebitengine/purego`); `backend.Info` gained `DisplayList
+[]DisplayGeom` (needed for `qdisp` lines and `disp=` bounds); horizontal
+scroll required an arm64-specific register-exhausting `...any` binding (a
+plain `...any` binding was empirically proven insufficient - purego still
+routes the value to a register), covered by a real-ABI regression test.
+`scroll by=page` reconciliation: the ticket's pixel-units Decision is
+authoritative; CONCEPT.md ch.8's line-unit statement describes the `by=line`
+default. Phase 1 emits the display-height pixel page; the current-window
+height variant stays Phase 2.
+
+Deferred to an unlocked GUI session with Accessibility granted (not run this
+phase): the interactive-injection subset (`k`/`txt`/`m`/`c`/`drag`/`scroll`/
+`clip`/`paste` against TextEdit; `qinfo`/`qdisp`/`qmouse` cross-checked
+against System Settings > Displays). Real multi-display `disp=` cursor
+placement and the horizontal-scroll live effect are covered only by unit and
+real-ABI tests until then.
+
 ### Phase 2: Windows, capture, permissions request, signing script
 
 Depends on Phase 1. Goals: `win` (selector matching per WINDOW SELECTORS,
