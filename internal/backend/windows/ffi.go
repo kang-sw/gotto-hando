@@ -21,6 +21,8 @@ var (
 	user32   = windows.NewLazySystemDLL("user32.dll")
 	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
 	shcore   = windows.NewLazySystemDLL("shcore.dll")
+	gdi32    = windows.NewLazySystemDLL("gdi32.dll")
+	shell32  = windows.NewLazySystemDLL("shell32.dll")
 
 	// SendInput / physical key state (keyboard.go, mouse.go, probes.go).
 	procSendInput        = user32.NewProc("SendInput")
@@ -57,6 +59,32 @@ var (
 	// Named-pipe busy-retry (bridge_pipe.go's DialBridge). x/sys/windows
 	// does not wrap WaitNamedPipe.
 	procWaitNamedPipeW = kernel32.NewProc("WaitNamedPipeW")
+
+	// Window enumeration/focus/capture (windows.go, capture.go). Not
+	// wrapped by golang.org/x/sys/windows (ticket Codebase Findings).
+	procSetForegroundWindow  = user32.NewProc("SetForegroundWindow")
+	procShowWindow           = user32.NewProc("ShowWindow")
+	procGetWindowTextW       = user32.NewProc("GetWindowTextW")
+	procGetWindowTextLengthW = user32.NewProc("GetWindowTextLengthW")
+	procGetWindowLongPtrW    = user32.NewProc("GetWindowLongPtrW")
+	procAttachThreadInput    = user32.NewProc("AttachThreadInput")
+	procIsIconic             = user32.NewProc("IsIconic")
+	procPrintWindow          = user32.NewProc("PrintWindow")
+
+	// GDI capture family (capture.go).
+	procGetDC                  = user32.NewProc("GetDC")
+	procReleaseDC              = user32.NewProc("ReleaseDC")
+	procCreateCompatibleDC     = gdi32.NewProc("CreateCompatibleDC")
+	procCreateCompatibleBitmap = gdi32.NewProc("CreateCompatibleBitmap")
+	procSelectObject           = gdi32.NewProc("SelectObject")
+	procDeleteDC               = gdi32.NewProc("DeleteDC")
+	procDeleteObject           = gdi32.NewProc("DeleteObject")
+	procBitBlt                 = gdi32.NewProc("BitBlt")
+	procGetDIBits              = gdi32.NewProc("GetDIBits")
+
+	// open.go's ShellExecuteExW; x/sys/windows only wraps the simpler
+	// ShellExecuteW, not the Ex variant that yields hProcess.
+	procShellExecuteExW = shell32.NewProc("ShellExecuteExW")
 )
 
 // point32 is a Win32 POINT (LONG x, y) - GetCursorPos's out-param shape.
