@@ -6,6 +6,8 @@ related:
   260907-feat-darwin-backend: reference implementation of the same interface
 sage-review-design: completed
 sage-review-design-reviewed: 55bf13435baadcbb
+sage-review-completeness: completed
+sage-review-completeness-reviewed: 0ae58bfdce4b9bd2
 ---
 
 # Windows backend: input, windows, capture, session checks, exec/open
@@ -50,21 +52,45 @@ set.
   2. permissions: Windows has none (`perms=n/a`), E_PERMISSION never occurs.
   3. no key or mouse button physically held down (`GetAsyncKeyState` over
      every virtual key, mouse buttons included): E_INPUT, never E_VALIDATE
-     or E_SESSION (help-windows.txt CHECK).
+     or E_SESSION (help-windows.txt CHECK). This check is input-injection
+     gating: it runs only when the run contains an input-injecting command,
+     so a query-only run (`qinfo`/`qdisp`/`qmouse`/`sleep`/`set` and
+     comments) is exempt and never aborts on a stuck key - matching the
+     landed darwin backend and the clarified help.txt EXECUTION step 4, and
+     keeping the `qinfo`/`--ping` recovery loop alive while a key is held.
+     On Windows `GetAsyncKeyState` has no permission coupling, so this
+     exemption is an explicit gating decision, not a side effect of a
+     permission check (gate it on the same "run injects input" condition as
+     macOS Accessibility, even though Windows itself needs no permission).
   4. absolute and `disp=` coordinates inside the virtual desktop: E_BOUNDS.
   5. every key name supported on this platform: E_INPUT (always passes on
      Windows).
 - Session gating is per command: a run whose lines are only `qinfo`,
   `qdisp`, `qmouse`, `sleep`, `set` and comments never fails the session
-  check and reports the state instead (`qinfo session=inactive|locked`),
-  which keeps the recovery loop (`qinfo`, `--ping`) alive; every other
-  command requires an unlocked interactive session (own or bridge).
+  check (nor the held-key check, per check 3 above) and reports the state
+  instead (`qinfo session=inactive|locked`), which keeps the recovery loop
+  (`qinfo`, `--ping`) alive; every other command requires an unlocked
+  interactive session (own or bridge).
 - A preflight failure is reported as the `abort` object (help.txt JSONL):
   `{"event":"abort","code":"E_...","msg":"..."}` with no `done` object; in
   the plain format nothing goes to stdout and stderr gets
-  `abort: <message> (<E_CODE>)`. The backend returns code and message; the
-  CLI layer from `260907-feat-cli-core` prints it and maps the exit code
-  (E_CONNECT 3, everything else 4).
+  `abort: <message> (<E_CODE>)`. `Backend.Preflight` returns the code via
+  `*backend.PreflightError` (the coded-error type and the `engine.Run`
+  Preflight-call + abort-mapping are already landed by
+  `260907-feat-darwin-backend`); a non-coded error becomes `E_UNKNOWN`. The
+  CLI layer from `260907-feat-cli-core` prints the abort and maps the exit
+  code (E_CONNECT 3, everything else 4). The windows backend only has to
+  return `*backend.PreflightError` from its five checks; no engine change is
+  needed.
+- Local dispatch wiring: Phase 1 adds `cmd/gotto-hando/dispatch_windows.go`
+  (`//go:build windows`) whose `newLocalBackend()` constructs the windows
+  backend behind `runtime.GOOS == "windows"`, parallel to the landed
+  `dispatch_darwin.go`. The existing `dispatch_other.go` build constraint
+  must narrow from `//go:build !darwin` to `//go:build !darwin && !windows`
+  so windows gets exactly one `newLocalBackend` (its own), and every other
+  GOOS keeps the exit-2 stub. `backend.Info.DisplayList` and the engine's
+  `qinfo`/`qdisp`/`qmouse` formatting already exist (landed by darwin); the
+  windows backend only populates them.
 - `win[wait=DUR]` is v1 and shares one polling loop with `open[wait=]`: poll
   every 100 ms, E_NOWINDOW after DUR.
 - `open` launches via `ShellExecuteExW` with `SEE_MASK_NOCLOSEPROCESS`.
@@ -81,7 +107,10 @@ set.
 - `exec[shell]` is `cmd /C`; output decoded from the console output code page
   (fallback ACP) to UTF-8 with U+FFFD replacement.
 - `--request-perms` locally exits 2 (nothing to request); `qinfo` reports
-  `perms=n/a elevated=0|1`.
+  `perms=n/a elevated=0|1`. There is no dedicated `backend.Info` field for
+  elevation: pack `elevated=0|1` into the existing free-form `Info.Perms`
+  string (as darwin composes its `perms=` value in `permsString`), so
+  `qinfo` prints `perms=n/a elevated=0|1` from that one field.
 
 ## Constraints
 
@@ -108,13 +137,20 @@ complete line including `desktop=`/`displays=` from `EnumDisplayMonitors`
 and `elevated=`), delays, held-state, all five preflight checks with the
 per-command gating rule and the `abort` result (held key = E_INPUT), the DPI
 manifest `.syso` plus the `init` fallback call, key-name to scan-code table.
+This phase also wires `local` dispatch: `Preflight` returns
+`*backend.PreflightError`, and a new `dispatch_windows.go` factory (behind
+`runtime.GOOS == "windows"`, with `dispatch_other.go` narrowed to
+`!darwin && !windows`) runs the windows backend through the real CLI, so
+`gotto-hando local ...` executes its Phase-1 command set end to end.
 Verification: keyboard/mouse/clipboard commands against Notepad plus
 `qinfo`/`qmouse`; `qinfo desktop=`/`displays=` match a two-monitor layout
 with different scaling percentages; unit tests for scan-code mapping
 (extended keys, numpad) with an injectable `SendInput`; unit tests with
 injectable `GetAsyncKeyState` and session probes that a held key yields
-`abort` E_INPUT, that a `qinfo`-only run passes preflight in a locked or
-non-console session, and that a run containing `k` fails E_SESSION there;
+`abort` E_INPUT for an input-injecting run, that a `qinfo`-only run passes
+preflight in a locked or non-console session AND while a key is physically
+held (check 3 is input-gated, so the recovery loop survives a stuck key),
+and that a run containing `k` fails E_SESSION there;
 cross-compile windows/amd64 from macOS and run on a Windows machine.
 
 ### Phase 2: Windows, monitors, capture, exec/open
