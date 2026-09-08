@@ -5,9 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/kang-sw/gotto-hando/internal/backend"
 	"github.com/kang-sw/gotto-hando/internal/backend/dryrun"
 	"github.com/kang-sw/gotto-hando/internal/engine"
 	"github.com/kang-sw/gotto-hando/internal/ir"
+	"github.com/kang-sw/gotto-hando/internal/output"
 	"github.com/kang-sw/gotto-hando/internal/syntax"
 )
 
@@ -158,5 +160,96 @@ func TestWinMatchPolicy(t *testing.T) {
 	}
 	if sum.Results[1].Status != "err" {
 		t.Errorf("win status = %s, want err", sum.Results[1].Status)
+	}
+}
+
+// indexOf returns the index of the first call equal to s, or -1.
+func indexOf(calls []string, s string) int {
+	for i, c := range calls {
+		if c == s {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestKeepGoingReleasesPartialKeyDown covers the -k "keys taken by the
+// failed line are released immediately" clause (help.txt:531-532). A
+// multi-key kd fails on its second key; the first key it already pressed
+// must be released right away (before the next line runs), NOT lingering in
+// held until end-of-run releaseAll.
+func TestKeepGoingReleasesPartialKeyDown(t *testing.T) {
+	seq := parse(t, "kd[]ctrl+shift", "k[]z")
+	be := &dryrun.Backend{FailOn: func(call string) error {
+		if call == "KeyDown shift" {
+			return errors.New("injected")
+		}
+		return nil
+	}}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{KeepGoing: true})
+
+	if got := statuses(sum); len(got) < 2 || got[0] != "err" || got[1] != "ok" {
+		t.Fatalf("statuses = %v, want [err ok ...]", got)
+	}
+	// The partially-pressed ctrl is released immediately, before the next
+	// line reaches the backend.
+	up := indexOf(be.Calls, "KeyUp ctrl")
+	next := indexOf(be.Calls, "KeyDown z")
+	if up < 0 {
+		t.Fatalf("ctrl was not released immediately; calls=%v", be.Calls)
+	}
+	if next >= 0 && up > next {
+		t.Fatalf("ctrl released (idx %d) after next line ran (idx %d); calls=%v", up, next, be.Calls)
+	}
+	// Nothing lingers to end-of-run releaseAll: the rollback already freed
+	// ctrl and shift was never pressed.
+	if sum.HeldReleased != 0 {
+		t.Fatalf("held_released = %d, want 0 (failed line's key released immediately, not at end)", sum.HeldReleased)
+	}
+	// Exactly one KeyUp ctrl (the immediate rollback), no double-release.
+	ups := 0
+	for _, c := range be.Calls {
+		if c == "KeyUp ctrl" {
+			ups++
+		}
+	}
+	if ups != 1 {
+		t.Fatalf("KeyUp ctrl called %d times, want 1; calls=%v", ups, be.Calls)
+	}
+	if sum.Exit != 1 {
+		t.Fatalf("exit = %d, want 1", sum.Exit)
+	}
+}
+
+// TestExecTimeoutNotSoftened: exec timeout is E_TIMEOUT and noerr never
+// softens it (help.txt:390-391, :536). A backend reporting TimedOut fails
+// the line with E_TIMEOUT even when the line has noerr.
+func TestExecTimeoutNotSoftened(t *testing.T) {
+	seq := parse(t, "exec[noerr,timeout=1s]sleep 5")
+	be := &dryrun.Backend{ExecResult: backend.ExecResult{TimedOut: true}}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+
+	if sum.Results[0].Status != "err" {
+		t.Fatalf("status = %s, want err (timeout not softened by noerr)", sum.Results[0].Status)
+	}
+	if sum.Results[0].ErrCode != output.ETimeout {
+		t.Fatalf("code = %s, want E_TIMEOUT", sum.Results[0].ErrCode)
+	}
+	if sum.Exit != 1 {
+		t.Fatalf("exit = %d, want 1", sum.Exit)
+	}
+}
+
+// TestExecNonZeroSoftenedByNoerr is the contrast: a non-zero exit (not a
+// timeout) IS softened by noerr, so the line is ok.
+func TestExecNonZeroSoftenedByNoerr(t *testing.T) {
+	seq := parse(t, "exec[noerr]grep -q x f")
+	be := &dryrun.Backend{ExecResult: backend.ExecResult{Exit: 1}}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+	if sum.Results[0].Status != "ok" {
+		t.Fatalf("status = %s, want ok (non-zero exit softened by noerr)", sum.Results[0].Status)
+	}
+	if sum.Exit != 0 {
+		t.Fatalf("exit = %d, want 0", sum.Exit)
 	}
 }

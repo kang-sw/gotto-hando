@@ -105,6 +105,19 @@ func TestNegativeClasses(t *testing.T) {
 		{"over-long chord", "k[csamp]a+b+c+d", output.EValidate},
 		{"scroll ticks range", "scroll[]down 99", output.EValidate},
 		{"exec timeout range", "exec[timeout=61s]x", output.EValidate},
+		// Malformed coordinate (coord.go parseCoord / parsePoint).
+		{"bad coord non-numeric", "m[]abc,def", output.ESyntax},
+		{"bad coord single value", "m[]1", output.ESyntax},
+		{"coord NaN", "m[]NaN,0", output.ESyntax},
+		{"coord Inf", "m[]Inf,0", output.ESyntax},
+		{"coord scientific", "m[]1e3,0", output.ESyntax},
+		// NaN/Inf/scientific scale (build.go buildCap, validate grammar).
+		{"scale NaN", "cap[scale=NaN]", output.ESyntax},
+		{"scale Inf", "cap[scale=Inf]", output.ESyntax},
+		// Malformed selector (validate.go validateSelector).
+		{"non-numeric id selector", "win[]id:abc", output.EValidate},
+		{"non-numeric pid selector", "win[]pid:xyz", output.EValidate},
+		{"invalid regex selector", "win[r](", output.EValidate},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -190,4 +203,52 @@ func equal2D(a, b [][]string) bool {
 		}
 	}
 	return true
+}
+
+// TestMouseButtonParse: md/mu (mouse button hold/release) parse positively,
+// mirroring the k/kd/ku positive coverage. md defaults to the left button
+// and takes an optional point; mu takes no payload (help.txt:322-331).
+func TestMouseButtonParse(t *testing.T) {
+	for _, line := range []string{"md[]", "mu[]", "md[b=right]", "md[]100,200", "md[w]50%,50%"} {
+		seq, diags := syntax.Parse([]string{line}, defaults)
+		if len(diags) != 0 {
+			t.Errorf("line %q should parse, got %+v", line, diags)
+			continue
+		}
+		if len(seq.Ops) != 1 {
+			t.Errorf("line %q: got %d ops, want 1", line, len(seq.Ops))
+		}
+	}
+	// A single md[]/mu[] pair balances and validates.
+	if d := analyze(t, "md[]", "mu[]"); len(d) != 0 {
+		t.Errorf("md[]/mu[] pair should validate, got %+v", d)
+	}
+}
+
+// TestMouseHeldBalance mirrors the kd/ku held-balance rules for md/mu
+// (validate.go:80-99, help.txt:468-469): a button held by md cannot be
+// clicked or dragged, cannot be held again, and mu must release a held
+// button.
+func TestMouseHeldBalance(t *testing.T) {
+	cases := []struct {
+		name  string
+		lines []string
+	}{
+		{"click button held by md", []string{"md[]", "c[]1,2"}},
+		{"drag button held by md", []string{"md[]", "drag[]1,2 3,4"}},
+		{"duplicate md hold", []string{"md[]", "md[]"}},
+		{"mu without md", []string{"mu[]"}},
+		{"mu wrong button", []string{"md[b=left]", "mu[b=right]"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diags := analyze(t, tc.lines...)
+			if len(diags) == 0 {
+				t.Fatalf("expected a validation diagnostic for %v", tc.lines)
+			}
+			if diags[0].Code != output.EValidate {
+				t.Fatalf("code = %s, want E_VALIDATE (%v -> %s)", diags[0].Code, tc.lines, diags[0].Msg)
+			}
+		})
+	}
 }

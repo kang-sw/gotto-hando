@@ -91,3 +91,53 @@ func TestCheckFromStdin(t *testing.T) {
 		t.Errorf("stdout = %q, want %q", out, "ok 2 lines\n")
 	}
 }
+
+// TestBadCoordFailure: a malformed coordinate is an E_SYNTAX parse error
+// with the exact "<CODE> line n col c:" format, the indented source line,
+// empty stdout and exit 2 (help.txt failure contract).
+func TestBadCoordFailure(t *testing.T) {
+	out, errOut, code := runBin(t, "", "local", "--check", "m[]abc,def")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q, want empty", out)
+	}
+	if !strings.HasPrefix(errOut, "E_SYNTAX line 1 col 4: ") {
+		t.Errorf("stderr missing E_SYNTAX prefix:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "\n  m[]abc,def\n") {
+		t.Errorf("stderr missing two-space-indented source line:\n%s", errOut)
+	}
+}
+
+// TestBadSelectorFailure: a non-numeric id: selector is an E_VALIDATE error
+// with the exact format, empty stdout and exit 2.
+func TestBadSelectorFailure(t *testing.T) {
+	out, errOut, code := runBin(t, "", "local", "--check", "win[]id:abc")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q, want empty", out)
+	}
+	if !strings.HasPrefix(errOut, "E_VALIDATE line 1 col 1: ") {
+		t.Errorf("stderr missing E_VALIDATE prefix:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "\n  win[]id:abc\n") {
+		t.Errorf("stderr missing two-space-indented source line:\n%s", errOut)
+	}
+}
+
+// TestScaleNaNRejected: cap[scale=NaN] must NOT validate as ok (the guard
+// closes the strconv.ParseFloat NaN/Inf loophole); it is an exit-2 error
+// with empty stdout, not "ok 1 lines".
+func TestScaleNaNRejected(t *testing.T) {
+	out, _, code := runBin(t, "", "local", "--check", "cap[scale=NaN]")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 (NaN scale must be rejected)", code)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q, want empty (must not print ok)", out)
+	}
+}
