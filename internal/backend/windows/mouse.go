@@ -60,9 +60,20 @@ func postMoveEvent(p backend.Point) error {
 // normalizeAbsolute converts a physical-pixel virtual-desktop coordinate to
 // SendInput's required 0..65535 normalized range, per MOUSEEVENTF_ABSOLUTE
 // + MOUSEEVENTF_VIRTUALDESK's documented contract (normalized against the
-// full virtual screen's bounding box, not just the primary monitor).
+// full virtual screen's bounding box, not just the primary monitor). Thin
+// wrapper around the pure normalizeAbsoluteAgainst so the real
+// GetSystemMetrics-backed virtualScreenRect() stays the only impure part.
 func normalizeAbsolute(px, py float64) (int32, int32) {
 	vx, vy, vw, vh := virtualScreenRect()
+	return normalizeAbsoluteAgainst(px, py, vx, vy, vw, vh)
+}
+
+// normalizeAbsoluteAgainst is normalizeAbsolute's pure math, split out
+// (analogous to virtualScreenRect() already being its own seam) so
+// mouse_test.go can call the REAL normalization formula directly against a
+// synthetic virtual-screen rect instead of reimplementing the arithmetic in
+// a test-local duplicate.
+func normalizeAbsoluteAgainst(px, py float64, vx, vy, vw, vh int32) (int32, int32) {
 	if vw <= 0 {
 		vw = 1
 	}
@@ -132,7 +143,7 @@ func buttonFlag(bt backend.Button, down bool) uint32 {
 // distinguish them at the injection layer) - documented as a CAVEATS
 // bullet in assets/help-windows.txt.
 func (b *Backend) Scroll(ctx context.Context, dir backend.Dir, ticks int, by backend.ScrollUnit) error {
-	amount := int32(ticks) * wheelDelta
+	amount := scrollAmount(ticks, by)
 	switch dir {
 	case "up":
 		return sendMouseInput(0, 0, uint32(amount), mouseeventfWheel)
@@ -144,6 +155,16 @@ func (b *Backend) Scroll(ctx context.Context, dir backend.Dir, ticks int, by bac
 		return sendMouseInput(0, 0, uint32(amount), mouseeventfHwheel)
 	}
 	return nil
+}
+
+// scrollAmount is Scroll's pure notch-count math, split out so
+// mouse_test.go can pin the by=page reconciliation decision (see Scroll's
+// doc comment above) against the REAL computation instead of a duplicate.
+// Windows has no pixel/page-unit wheel injection API, so by is accepted but
+// does not change the result: both by=line and by=page send
+// ticks*WHEEL_DELTA notches.
+func scrollAmount(ticks int, by backend.ScrollUnit) int32 {
+	return int32(ticks) * wheelDelta
 }
 
 func sendMouseInput(dx, dy int32, mouseData uint32, dwFlags uint32) error {
