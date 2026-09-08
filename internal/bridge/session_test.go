@@ -2,6 +2,7 @@ package bridge_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -470,4 +471,70 @@ func TestHandleMalformedRequestGetsPlainTextNotJSONL(t *testing.T) {
 	if err := json.Unmarshal(resp, &probe); err == nil {
 		t.Fatalf("response = %q, want plain text, not valid JSON", text)
 	}
+}
+
+// (g) Handle's request read is bounded (I3 hardening): a caller that never
+// sends a trailing '\n' cannot make Handle buffer unbounded memory. This
+// sends well past the 16 MiB cap with no newline and asserts Handle still
+// returns promptly (bounded, not hung) with the same "malformed request"
+// plain-text response as any other undecodable request - it does not try
+// to pin the exact byte count where the cut-off happens, only that it
+// exists and does not need i.e. gigabytes to trigger.
+func TestHandleBoundsUnterminatedRequestRead(t *testing.T) {
+	const overCap = 16*1024*1024 + 4096 // just past the 16 MiB cap
+	be := &dryrun.Backend{}
+	sess := &bridge.Session{Backend: be}
+
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		sess.Handle(context.Background(), server)
+		close(done)
+	}()
+
+	// Handle blocks writing its "malformed request" response until the
+	// peer reads it, so the writer below must run concurrently with the
+	// read - reading only after <-done would deadlock (writer never
+	// reads, Handle never gets past its own blocked write).
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		chunk := bytes.Repeat([]byte("x"), 64*1024)
+		written := 0
+		for written < overCap {
+			n, err := client.Write(chunk)
+			written += n
+			if err != nil {
+				// Expected once Handle stops reading past the cap and later
+				// closes conn (defer conn.Close() in session.go) - the
+				// blocked Write unblocks with an error.
+				return
+			}
+		}
+	}()
+
+	respCh := make(chan []byte, 1)
+	go func() {
+		resp, _ := io.ReadAll(client)
+		respCh <- resp
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Handle did not return - the request read appears unbounded")
+	}
+
+	var resp []byte
+	select {
+	case resp = <-respCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("did not read Handle's response after it returned")
+	}
+	if !strings.HasPrefix(string(resp), "malformed request: ") {
+		t.Fatalf("response = %q, want it to start with %q", resp, "malformed request: ")
+	}
+
+	client.Close()
+	<-writerDone
 }

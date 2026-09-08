@@ -41,7 +41,15 @@ func (s *Session) Handle(ctx context.Context, conn io.ReadWriteCloser) {
 	defer s.mu.Unlock()
 	defer conn.Close()
 
-	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	// maxRequestBytes bounds the request read so a malformed same-user
+	// caller (or a caller stuck writing without ever sending '\n') cannot
+	// grow bridge memory unboundedly; it mirrors the 16 MiB cap
+	// cmd/gotto-hando/dispatch_windows.go's forwarder already applies to
+	// the bridge's own response stream. A request that hits this cap
+	// without a trailing '\n' fails decodeRequest below like any other
+	// malformed request - the caller sees "malformed request: ...".
+	const maxRequestBytes = 16 * 1024 * 1024
+	line, err := bufio.NewReader(io.LimitReader(conn, maxRequestBytes)).ReadBytes('\n')
 	if err != nil && len(line) == 0 {
 		// A same-machine, same-user caller sending nothing at all is not
 		// expected in normal operation; best-effort report and log, no
