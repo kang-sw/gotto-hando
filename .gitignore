@@ -1,2 +1,5 @@
 ai-docs/**/*.local.md
 ai-docs/.deps/
+
+# Local build output (Makefile `build`/`dev-sign` target).
+/gotto-hando
