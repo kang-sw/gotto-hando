@@ -210,3 +210,36 @@ type keybdInputRecord struct {
 	ki      keybdInput
 	padding uint64
 }
+
+// SEE_MASK_NOCLOSEPROCESS (shellapi.h) - ShellExecuteExW's fMask bit that
+// asks it to hand back hProcess (open.go needs the launched process's PID
+// for open[wait=]'s PID-then-basename window resolution). SW_SHOWNORMAL is
+// ShellExecuteExW's nShow.
+const (
+	seeMaskNocloseprocess = 0x00000040
+	swShownormal          = 1
+)
+
+// shellExecuteInfoW is a hand-rolled Win32 SHELLEXECUTEINFOW (shellapi.h);
+// x/sys/windows only wraps the simpler ShellExecuteW, not the Ex variant
+// this ticket needs for hProcess. Field order/types mirror the C struct
+// exactly so Go's natural (unpacked) alignment reproduces the real ABI
+// layout - ffi_test.go/exec_test.go pin its size (112 bytes on amd64) the
+// same way ffi.go's mouseInputRecord/keybdInputRecord sizes are pinned.
+type shellExecuteInfoW struct {
+	cbSize       uint32
+	fMask        uint32
+	hwnd         uintptr
+	lpVerb       *uint16
+	lpFile       *uint16
+	lpParameters *uint16
+	lpDirectory  *uint16
+	nShow        int32
+	hInstApp     uintptr
+	lpIDList     uintptr
+	lpClass      *uint16
+	hkeyClass    uintptr
+	dwHotKey     uint32
+	hIcon        uintptr
+	hProcess     uintptr
+}

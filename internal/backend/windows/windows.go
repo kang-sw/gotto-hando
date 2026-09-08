@@ -39,8 +39,26 @@ const swRestore = 9
 // filter (visible, not cloaked, non-empty title, not a tool window -
 // help-windows.txt DPI AND COORDINATES) before the WINDOW SELECTOR match
 // (help.txt :286-297).
+//
+// open[wait=]'s PID-then-basename resolution (ticket Codebase Findings):
+// internal/engine/exec.go's openAppSelector only ever builds an app-kind
+// selector from open's target, with no PID - so when sel's value is the
+// basename Open() (open.go) just launched, a window owned by that exact
+// process (lastOpenPID) is preferred, even if its own image basename
+// differs (a shell hand-off can re-exec into a different process image).
+// Absent that match, the generic image-basename substring match below
+// already implements the "or, when the shell handed off, by any process
+// whose image basename equals the payload's basename" fallback, because
+// Window.App is always the image basename.
 func (b *Backend) Windows(ctx context.Context, sel ir.Selector) ([]backend.Window, error) {
 	all := enumerateWindows()
+	if sel.Kind == "app" && b.lastOpenBasename != "" && strings.EqualFold(sel.Value, b.lastOpenBasename) {
+		for i := range all {
+			if uint32(all[i].PID) == b.lastOpenPID {
+				return []backend.Window{all[i]}, nil
+			}
+		}
+	}
 	return filterWindows(all, sel), nil
 }
 
