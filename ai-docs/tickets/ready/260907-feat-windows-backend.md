@@ -153,6 +153,76 @@ held (check 3 is input-gated, so the recovery loop survives a stuck key),
 and that a run containing `k` fails E_SESSION there;
 cross-compile windows/amd64 from macOS and run on a Windows machine.
 
+### Result (4d523dc) - 2026-09-08
+
+`internal/backend/windows` (`golang.org/x/sys/windows` LazyDLL/LazyProc,
+`CGO_ENABLED=0`) implements the Phase 1 command set: `k kd ku txt m c md mu
+drag scroll clip paste qclip qmouse qdisp qinfo sleep set`, session/lock
+detection (`ProcessIdToSessionId` vs `WTSGetActiveConsoleSessionId`, then
+input-desktop name `Default`->active / `Winlogon`->locked / else->inactive;
+`bridge` reserved-unwired for `260908-feat-remote-ssh`), the five-check
+preflight gate in Constraints order with the input-injection gating on
+checks 3 and 5 (a query-only run stays exempt even with a stuck key), `disp=`
+display-relative bounds, and the full KEY NAMES scan-code table (every
+canonical symbol supported, `volup`/`voldown`/`mute` included; extended-key
+flag per help-windows.txt CAVEATS). `SendInput` drives keyboard (scan code +
+extended flag; `txt` via `KEYEVENTF_UNICODE` UTF-16 units) and mouse
+(absolute normalization to 0..65535 against the virtual-desktop metrics,
+`MOUSEEVENTF_WHEEL`/`HWHEEL` `ticks*WHEEL_DELTA`); clipboard via
+`OpenClipboard`/`GlobalAlloc`/`CF_UNICODETEXT`. `qinfo` packs `elevated=0|1`
+into the free-form `Info.Perms` (`perms=n/a elevated=N`), so `formatQueryInfo`
+prints it with no engine change; `Primary="ctrl"`, `OSVer` via `RtlGetVersion`,
+`DisplayList`/`desktop=` from `EnumDisplayMonitors`+`GetMonitorInfoW`+
+`GetDpiForMonitor`. Per-Monitor-V2 DPI awareness ships as a checked-in
+`cmd/gotto-hando/rsrc_windows_amd64.syso` (generated from
+`cmd/gotto-hando/windows.manifest` by `github.com/akavel/rsrc`, a build-time
+tool that adds no `go.mod` require) plus a `SetProcessDpiAwarenessContext`
+`init` fallback. `cmd/gotto-hando` dispatches `local` through the windows
+backend behind `runtime.GOOS=="windows"` via `dispatch_windows.go`, with
+`dispatch_other.go` narrowed to `!darwin && !windows`.
+
+Verification (safe subset, run this phase): `go build`/`go vet`/`go test
+./internal/engine/... ./assets/...` on the Mac green; `GOOS=windows
+GOARCH=amd64 go build ./...`/`go vet` clean save two documented, unavoidable
+`unsafe.Pointer` warnings on the cgo-free clipboard `GlobalLock` path
+(`golang.org/x/sys/windows`'s own generated code carries the identical
+pattern); `gofmt -l` clean. Cross-compiled `internal/backend/windows` unit
+tests run on a real Windows 11 box (`sw.kang@192.168.100.2`, no Go installed,
+via `go test -c` + scp) all pass, covering full scan-code coverage/extended
+flags/numpad, the `INPUT` struct-size invariant, `scrollAmount` line==page
+notches, `normalizeAbsolute`, and every preflight fake-probe gating scenario.
+CLI smoke on the box: `local qinfo` -> `os=windows osver=10.0.26200 ...
+session=inactive perms=n/a elevated=1` (the documented-correct result for an
+ssh shell with no bridge), `local qdisp`/`qmouse` returned live values, and
+`local 'k[]a'` aborted `E_SESSION` (exit 4).
+
+Review: no Critical. Three Important (all test-quality: tautological
+`scroll`/`normalizeAbsolute` tests that never called production code, and a
+locked-session preflight test whose `held=false` contradicted its
+check-1-before-check-3 claim) fixed by extracting pure `scrollAmount`/
+`normalizeAbsoluteAgainst` seams and setting `held=true`, re-verified passing
+against production code on the box; three Minor fixed (`ClipboardSet` now
+`GlobalFree`s on both error paths, `gofmt`, a stale test doc comment).
+
+Deviations: `golang.org/x/sys v0.47.0` added as a direct dependency; the
+initial DPI manifest invented a non-existent `<dpiAwarenessContext>` element
+that broke process startup (SxS error, reproduced live on the box) and was
+corrected to the real `<dpiAwareness>` (2016 ns) + `<activeCodePage>` (2019
+ns) elements; `GetProcessWindowStation` from the plan's ffi list was dropped
+as redundant (session-id comparison already identifies session-0/service/
+disconnected-RDP before `OpenInputDesktop`). `scroll[by=page]`: Windows has
+no pixel/page-unit wheel injection API (only `WHEEL_DELTA` notches), so
+`by=page` sends the same notches as `by=line`, documented as a new
+`assets/help-windows.txt` CAVEATS bullet inside the already-anchored
+`== CAVEATS ==` section (no new `== SECTION ==`, no new spec anchor).
+
+Deferred to an unlocked interactive GUI/console session (not run this phase,
+an ssh shell is not one): the real-`SendInput`-injection subset
+(`k`/`txt`/`m`/`c`/`drag`/`scroll`/`clip`/`paste` against Notepad), the
+two-monitor `qinfo desktop=`/`displays=` visual cross-check with differing
+scaling, and a genuinely physically-held key exercising the real
+`GetAsyncKeyState` path (covered by fake-probe unit tests until then).
+
 ### Phase 2: Windows, monitors, capture, exec/open
 
 Depends on Phase 1. Goals: `win` (selectors, `wait=`, restore/foreground),
