@@ -22,16 +22,20 @@ import (
 //  5. --remote-bin / --inline-captures / --request-perms -> not
 //     implemented, abort E_VALIDATE, exit 2.
 //  6. -f and [line ...] both given -> abort E_VALIDATE, exit 2.
-//  7. --check / --ir -> collect lines, then abort "parser not
-//     implemented", exit 2 (bypasses dest resolution).
+//  7. --check / --ir -> collect lines, then parse/inline/validate them
+//     (analyze): on failure, empty stdout + E_SYNTAX/E_VALIDATE
+//     diagnostics on stderr, exit 2; --check success prints "ok <n>
+//     lines" and --ir success prints the IR JSON, both exit 0. Never
+//     connects (bypasses dest resolution).
 //  8. dest == "local" -> "platform backend not implemented"; any other
 //     dest (including none) -> "remote destinations not implemented".
 //     Both abort E_VALIDATE, exit 2.
 //
-// No parser/IR/backend exists yet (Phase 2+): every path that would need
-// one exits 2 first, and options that are only inert in Phase 1 (-q,
-// --delay, --timeout, -k, --cap-on-error, --out) are accepted and stored
-// but otherwise unused.
+// Phase 2 adds the parser/IR/validator behind --check/--ir only; the
+// engine and backends exist but are not CLI-wired (no real backend), so
+// every dest path still exits 2. Options that remain inert (-q,
+// --timeout, -k, --cap-on-error, --out) are accepted and stored but
+// otherwise unused; --delay seeds the IR defaults for --ir.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	for _, a := range args {
 		switch a {
@@ -95,11 +99,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	if opts.Check || opts.IR {
-		if _, err := collectLines(opts.File, opts.HasFile, opts.Lines, stdin); err != nil {
+		lines, err := collectLines(opts.File, opts.HasFile, opts.Lines, stdin)
+		if err != nil {
 			fmt.Fprintf(stderr, "usage error: %v\n", err)
 			return output.ExitValidation
 		}
-		return abort(output.EValidate, "parser not implemented")
+		return analyze(opts, lines, stdout, stderr)
 	}
 
 	if opts.Dest == "local" {

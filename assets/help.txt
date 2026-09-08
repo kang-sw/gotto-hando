@@ -469,6 +469,16 @@ grep for it.
      held by md is rejected); one frame modifier; no % with r; chords of at
      most 8 keys including flags; [f] files exist, are UTF-8 and <= 64 KiB.
      --check and --ir stop here and never start ssh.
+     On a parse or validation failure the exit is 2, nothing runs, and
+     stdout stays EMPTY in both the plain and --jsonl forms. Each error
+     is written to stderr on its own line as
+       <E_CODE> line <n> col <c>: <message>
+     with the offending source line on the next line indented two spaces;
+     <E_CODE> is E_SYNTAX for a step-1 parse error and E_VALIDATE for a
+     step-2 validation error. All errors are reported before exit. On
+     success --check prints `ok <n> lines` to stdout and exits 0 (n
+     counts every input line, blanks and comments included); --ir prints
+     the IR JSON document to stdout and exits 0.
   3. Connect: local from a GUI terminal = none (in-process backend). <dest>
      = spawn `ssh <dest> <remote-bin> local ...` and wait for the remote
      start line. The remote process prints it once it has parsed and

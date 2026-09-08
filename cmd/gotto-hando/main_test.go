@@ -115,10 +115,10 @@ func TestMixedFileAndArgvExitsTwo(t *testing.T) {
 
 // TestNotImplementedOptionsExitTwo covers every later-ticket option
 // (ticket Decisions: --bridge, --remote-bin, --inline-captures,
-// --request-perms) and the local/--check/--ir/remote-dest paths, each
-// asserting exit 2 with its exact stderr message.
+// --request-perms) and the local/remote-dest paths, each asserting exit 2
+// with its exact stderr message. --check/--ir are now implemented (Phase 2)
+// and covered by analyze_test.go instead.
 func TestNotImplementedOptionsExitTwo(t *testing.T) {
-	tmp := writeTempFile(t, "k[]a\n")
 	cases := []struct {
 		name string
 		args []string
@@ -128,8 +128,6 @@ func TestNotImplementedOptionsExitTwo(t *testing.T) {
 		{"remote-bin", []string{"local", "--remote-bin", "/opt/gotto-hando"}, "abort: --remote-bin not implemented (E_VALIDATE)\n"},
 		{"inline-captures", []string{"local", "--inline-captures"}, "abort: --inline-captures not implemented (E_VALIDATE)\n"},
 		{"request-perms", []string{"local", "--request-perms"}, "abort: --request-perms not implemented (E_VALIDATE)\n"},
-		{"check", []string{"--check", "-f", tmp}, "abort: parser not implemented (E_VALIDATE)\n"},
-		{"ir", []string{"--ir", "-f", tmp}, "abort: parser not implemented (E_VALIDATE)\n"},
 		{"local-plain", []string{"local"}, "abort: platform backend not implemented, nothing ran (E_VALIDATE)\n"},
 		{"remote-dest", []string{"winbox", "qinfo"}, "abort: remote destinations not implemented (E_VALIDATE)\n"},
 	}
