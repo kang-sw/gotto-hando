@@ -39,6 +39,14 @@ type RunOptions struct {
 	// JSONL per line instead of waiting for the whole Summary. nil is a
 	// no-op, so every existing caller (the local-run path, every other
 	// test) is unaffected.
+	//
+	// INVARIANT: every value appended to Summary.Results MUST also be
+	// passed to OnResult (when non-nil) exactly once - the streaming
+	// consumer (the bridge) relies solely on OnResult and never iterates
+	// Summary.Results, so a Results append without a matching OnResult call
+	// (a skip branch, the cap-on-error extra, the end-of-run auto-release
+	// warns) is silently dropped over the wire while still printing locally.
+	// New Results appends below must keep this pairing.
 	OnResult func(output.Result)
 }
 

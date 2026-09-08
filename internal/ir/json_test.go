@@ -9,13 +9,11 @@ import (
 	"github.com/kang-sw/gotto-hando/internal/syntax"
 )
 
-// exampleDoc is the == IR JSON == document from assets/help.txt (:630-660),
-// copied verbatim except for "has_wait" (win/open), which help.txt's prose
-// example predates - it is a same-phase additive field (C2 fix,
-// 260908-feat-remote-ssh Phase 0 review) not yet mirrored into the docs.
-// The golden test parses the same nine source lines and asserts the --ir
-// output is structurally identical (field values and presence),
-// independent of key order and float formatting (1 vs 1.0).
+// exampleDoc is the == IR JSON == document from assets/help.txt, copied
+// verbatim (including the win/open "has_wait" field). The golden test
+// parses the same nine source lines and asserts the --ir output is
+// structurally identical (field values and presence), independent of key
+// order and float formatting (1 vs 1.0).
 const exampleDoc = `
 {
   "v": 1,
