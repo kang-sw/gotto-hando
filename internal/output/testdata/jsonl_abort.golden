@@ -1,0 +1,2 @@
+{"event":"start","out":"/tmp/gh/","dest":"local","target":{"os":"%OS%"}}
+{"event":"abort","code":"E_VALIDATE","msg":"platform backend not implemented, nothing ran"}

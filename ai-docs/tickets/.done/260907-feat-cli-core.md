@@ -5,6 +5,7 @@ sage-review-design: completed
 sage-review-completeness: completed
 sage-review-design-reviewed: ef5ce9b02e6b847b
 sage-review-completeness-reviewed: ef5ce9b02e6b847b
+completed: 2026-09-08
 ---
 
 # CLI core: module layout, embedded help, output, parser -> IR, drift tests
@@ -126,6 +127,38 @@ mixed `-f` + argv invocation exits 2; a test that every flag named in the
 OPTIONS table is accepted by the option parser and every parser flag appears
 in the table (this is drift test (g), landed early); formatter golden tests.
 
+### Result (cc2b42d) - 2026-09-08
+
+Landed the executable and output layer. `cmd/gotto-hando` (main, manual argv
+scanner in `options.go`, `--version`/`--expect-version` in `version.go`, line
+collection in `lines.go`, priority dispatch in `dispatch.go`) and
+`internal/output` (E_* codes and 0-5 exit mapping in `codes.go`, plain/JSONL
+result/done/abort writers in `writer.go`). `--help*` prints the embedded asset
+byte-for-byte and exits 0; every parser-dependent flag (`--check`, `--ir`,
+`-f`/stdin parsing) and later-ticket option/destination is parsed and rejected
+with exit 2 / `E_VALIDATE` "not implemented". Plain abort writes nothing to
+stdout plus one `abort: <msg> (<CODE>)` stderr line; JSONL abort emits `start`
+then `abort`, no `done`. Drift test (g) compares the OPTIONS table to the
+parser's flag set.
+
+Deviation: the plan claimed `--bridge`/`--version` are SYNOPSIS-only; the
+current `assets/help.txt` has real OPTIONS rows for both (line numbers moved
+after the remote-model rewrite), so both are `tableTracked` and the drift
+regex (>=2-space column gap) includes them. Only the four `--help*` flags are
+SYNOPSIS-only. Verified by extraction (17 rows) and a broken-fixture negative
+check.
+
+Review: fit clean; correctness clean + 1 Minor deferred (usage-error path
+emits plain text even under `--jsonl`; help.txt does not define that shape,
+deferred until a JSONL usage-error contract exists); test raised 2 Important
+coverage gaps, both fixed in cc2b42d (parseArgs error paths; interleaved
+options per help.txt SYNOPSIS). `go build`/`go vet`/`go test ./...` clean.
+
+Forward: Phase 2 wires the parser into the `--check`/`--ir`/`-f` paths that
+currently exit 2, and the Backend interface behind the `local` destination.
+The pointer spec files (help.md + three help-<os>.md) remain a ticket-closeout
+deliverable after Phase 3's drift tests.
+
 ### Phase 2: Parser, IR, static validation, Backend interface, dry-run
 
 Depends on Phase 1. Goals: tokenizer and parser for the GRAMMAR section
@@ -158,6 +191,58 @@ tests for each syntax error class mapped to exit 2 and the E_SYNTAX message
 format; `--ir` golden test against the IR JSON example; engine tests with the
 dry-run backend covering fail-fast, `-k`, held-key release and `done` counts.
 
+### Result (d01114f) - 2026-09-08
+
+Built the parser/IR/engine core. `internal/ir` (23 op kinds, ordered `--ir`
+serializer matching help.txt `== IR JSON ==`, static validation + LIMITS),
+`internal/syntax` (pure text->IR parser: line-shape dispatch, kv-vs-flag
+tokenizer, per-command modifier allow-lists and payload grammars, TEXT
+ESCAPES, coordinates, durations, KEY NAMES, selectors; a separate post-parse
+`[f]` inline pass), `internal/backend` (thin `Backend` interface per CONCEPT
+ch.8.2 + a test-only `dryrun` backend never imported by `cmd/`), and
+`internal/engine` (composes primitives, held tracking with reverse release,
+delay precedence d= > set[delay=] > --delay > 100ms, fail-fast / -k policy).
+`--check`/`--ir` are wired; every real-execution destination (including
+`local`) still exits 2 this phase - the engine and backend are exercised only
+through Go tests. Normative help.txt edits landed with the code: the
+parse/validation failure contract in `== EXECUTION ==` (empty stdout on exit
+2 in both modes, one `<CODE> line n col c: msg` + indented source per error,
+all errors before exit; `ok <n> lines` / IR JSON on success) and an
+`== IR JSON ==` note enumerating the per-op fields the 9-op example does not
+exercise.
+
+IR additions beyond the example (documented in help.txt this phase):
+`line_delay_ms` (present when `d=` given) and `display` (disp=N frames), plus
+the ordinary per-op fields (settle_ms, to_file, scroll dir/ticks/by, drag
+points/steps). A non-serialized `Op.FilePath` preserves the `qclip[f]` local
+output path for the future local writer without touching the wire IR.
+
+Review: fit raised 1 Important (added IR fields undocumented in the help.txt
+contract) - fixed by the `== IR JSON ==` edit; test raised 3 Important
+coverage gaps (bad-coord/bad-selector negatives, md/mu + held-balance, -k
+immediate release) - all fixed; correctness clean with 7 minor. Two real
+bugs found and fixed with mutation-verified regression tests: under -k a
+partially-failed kd/md line now releases its keys immediately (help.txt
+ERROR POLICY), and NaN/Inf/scientific are now rejected for coordinates and
+cap scale (was observable via `--check 'cap[scale=NaN]'`). Backend
+`ExecResult` gained a `TimedOut` signal so a real backend can map exec
+timeout to E_TIMEOUT (noerr does not soften it). `go build`/`go vet`/`go
+test ./...` clean; `--help` byte-identical to the edited asset.
+
+Forward gaps (deferred to the backend tickets, not bugs this phase):
+- display-frame resolution needs per-display geometry that `backend.Info`
+  does not yet carry; it currently resolves disp=N against desktop bounds.
+  The darwin/windows backends must add per-display rects (from qdisp) and
+  make the engine resolve the `display` frame against them.
+- `n=` has no LIMITS bound (help.txt defines none), so `k[n=0]`/`k[n=-3]`
+  parse and the engine no-ops the loop; and the 64 KiB line-length check
+  only fires on lines that produce an op, so an oversized comment/blank line
+  is unchecked. Revisit if a bound is ever defined.
+
+Forward: Phase 3 adds drift tests (a)-(f) and, at ticket closeout, the four
+pointer spec files. A later backend ticket wires the engine into the `local`
+run path (still exit 2 today).
+
 ### Phase 3: Help drift tests
 
 Depends on Phase 2. Goals: tests that fail when code and help text diverge:
@@ -182,3 +267,49 @@ as a normative edit in the same commit as the test, without changing
 meaning; the test is never weakened.
 Verification: `go test ./...` green; deliberately breaking one help line in a
 scratch copy makes the corresponding test fail.
+
+### Result (95296b7) - 2026-09-08
+
+Landed the help/spec drift tests. Test (b) COMMANDS + (c) KEY NAMES in
+`internal/syntax/help_drift_test.go`, (d) ERROR/EXIT CODES in
+`internal/output/help_drift_test.go`, (e) LIMITS in
+`internal/ir/limits_drift_test.go`, (a) spec-anchor coverage in
+`assets/spec_drift_test.go`, (f) format lint (80 cols, header regex, trailing
+newline) in `assets/lint_test.go`; (g) OPTIONS stays in
+`cmd/gotto-hando/options_drift_test.go` (Phase 1, untouched). Each extractor
+`t.Fatal`s on zero rows so it cannot pass vacuously.
+
+Three meaning-preserving normative `assets/help.txt` edits landed in the same
+commit as the tests (95296b7): MODIFIERS/MODIFIER KEYS "Accepted by" punctuation
+parity, a blank line separating the KEY NAMES token list from its prose, and
+splitting the multi-constant LIMITS rows (`k keys`, `drag`, `cap n=`) plus a
+`<= 48 chars:` prefix on `label=` so each numeric bound is a single extractable
+token. Documented exclusions the tests encode (not drift): `d=` is universal and
+absent from every bracket and Accepted-by list, so it is dropped from the code
+side of (b); `#` is handled by the line-shape dispatcher not `cmdSpec`, excluded
+from the command-name comparison; and the three target-dependent LIMITS rows
+(exec stdout/stderr, `--timeout`, `argv`) are excluded from (e). The two literal
+frame-group tokens `r|w|disp=` / `w|disp=N` are special-cased in the bracket
+extractor rather than regularized in the help text.
+
+Closeout (commit 34c06a6): the four pointer spec files
+`ai-docs/spec/{help,help-macos,help-windows,help-remote}.md` were created per
+Spec Impact - one `{#260908-...}` anchor per `== SECTION ==`, each pointing at
+its paired help text. Test (a)'s reverse direction (every help section has a
+spec anchor) now enforces for real instead of `t.Skip`; all four subtests pass
+and `spec_index.verify` reports ok.
+
+Review: fit clean, test clean, correctness clean + 1 Minor (the test (a)
+`specSeeRE` matched any help filename, so a mis-authored spec could compare
+against the wrong section set) - closed at closeout by authoring each spec to
+reference only its paired help text. Verification: `go build`/`go vet`/`go test
+./...` green; the drift extractors were mutation-verified non-vacuous (breaking
+`cap n=`, `mute`, a `scroll` Accepted-by entry, and `E_EXEC` each fails the
+corresponding test); `TestHelpFlagsByteIdentical` still passes after the
+help.txt edits.
+
+Ticket complete: all three phases landed (cc2b42d, d01114f, 95296b7 + closeout
+34c06a6). The darwin/windows/remote backend tickets carry the two forward gaps
+recorded in the Phase 2 Result (per-display geometry in `backend.Info`;
+unbounded `n=` / oversized comment-line checks) and wire the engine into the
+`local` run path (still exit 2 today).

@@ -1,0 +1,5 @@
+{"event":"start","out":"/tmp/gh/","dest":"local","target":{"os":"%OS%"}}
+{"line":4,"status":"ok","cmd":"cap","path":"/tmp/gh/0000-cap.png","w":1440,"h":875,"origin":[0,25],"scale":1,"t_ms":312}
+{"line":6,"status":"ok","cmd":"exec","exit":0,"stdout":"...\n","stderr":"","truncated":false,"t_ms":41}
+{"line":7,"status":"err","cmd":"c","src":"c[w]1500,300","code":"E_BOUNDS","msg":"coordinates outside current window"}
+{"event":"done","ok":2,"err":1,"skip":0,"elapsed_ms":500,"held_released":0}

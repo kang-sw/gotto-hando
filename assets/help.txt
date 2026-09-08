@@ -206,7 +206,7 @@ grep for it.
   Modifiers accepted by more than one command. Per-command modifiers are
   listed under COMMANDS.
   c s a m p    modifier keys held for the whole command (MODIFIER KEYS).
-               Accepted by k m c md mu drag scroll only.
+               Accepted by: k m c md mu drag scroll.
   d=DUR        wait DUR after this command instead of the global delay.
                Also applies to query/sleep/set/cap/exec/open, which get no
                delay by default (explicit beats default). Max 10s.
@@ -452,6 +452,7 @@ grep for it.
   quote grave lbracket rbracket numpad0-numpad9 decimal numadd numsub
   nummul numdiv numenter capslock printscreen scrolllock pause volup
   voldown mute
+
   Names are case-insensitive PHYSICAL keys (US layout positions), not
   characters: on a non-US layout k[]a may produce another character. To
   enter characters use txt. A name the platform cannot produce fails in
@@ -469,6 +470,16 @@ grep for it.
      held by md is rejected); one frame modifier; no % with r; chords of at
      most 8 keys including flags; [f] files exist, are UTF-8 and <= 64 KiB.
      --check and --ir stop here and never start ssh.
+     On a parse or validation failure the exit is 2, nothing runs, and
+     stdout stays EMPTY in both the plain and --jsonl forms. Each error
+     is written to stderr on its own line as
+       <E_CODE> line <n> col <c>: <message>
+     with the offending source line on the next line indented two spaces;
+     <E_CODE> is E_SYNTAX for a step-1 parse error and E_VALIDATE for a
+     step-2 validation error. All errors are reported before exit. On
+     success --check prints `ok <n> lines` to stdout and exits 0 (n
+     counts every input line, blanks and comments included); --ir prints
+     the IR JSON document to stdout and exits 0.
   3. Connect: local from a GUI terminal = none (in-process backend). <dest>
      = spawn `ssh <dest> <remote-bin> local ...` and wait for the remote
      start line. The remote process prints it once it has parsed and
@@ -658,6 +669,14 @@ grep for it.
       ],
       "defaults": {"delay_ms": 100, "text_interval_ms": 0, "key_gap_ms": 30}
     }
+    - The example shows one line per op kind and does not exercise every
+      field. Each op serializes exactly the fields its own modifiers and
+      payload require, so beyond the example a line may also carry:
+      "line_delay_ms" (a d= per-line delay override, any op); "display" on
+      a point or capture (a disp=N display frame); "settle_ms" (paste);
+      "to_file" (qclip[f]); "dir"/"ticks"/"by" (scroll); and
+      "points"/"steps" (drag). A field the example omits is unused by that
+      example line, not optional to the contract.
     - Every op keeps "line" and "src" for error reporting.
     - "keys" is a list of chords: k[]ctrl+shift+a b ->
       [["ctrl","shift","a"],["b"]].
@@ -726,17 +745,20 @@ grep for it.
   line length            64 KiB; an [f] file is a separate 64 KiB (for a
                          <dest> the line with the contents inlined in
                          escaped form must itself fit 64 KiB)
-  k keys                 64 sequential; 8 per chord including flags
+  k keys sequential      64
+  k keys per chord       8 including flags
   scroll ticks           1..50
   sleep                  <= 60s
   d=, ms=                <= 10s
   wait=                  <= 60s
   exec timeout=          <= 60s (default 10s)
   exec stdout/stderr     <= 64 KiB each (excess dropped, truncated=1)
-  drag                   1..200 payload points (path 2..200 including the
-                         current position); steps 1..200
-  label=                 [A-Za-z0-9][A-Za-z0-9_-]{0,47}
-  cap n=                 <= 120; at most 121 captures per run
+  drag points            1..200 payload points (path 2..200 including the
+                         current position)
+  drag steps             1..200
+  label=                 <= 48 chars: [A-Za-z0-9][A-Za-z0-9_-]{0,47}
+  cap n=                 <= 120
+  cap captures per run   <= 121
   scale=                 0.1..4.0 or native
   --timeout              default 300s, enforced by the executing process;
                          the local side kills ssh at deadline + 5s
