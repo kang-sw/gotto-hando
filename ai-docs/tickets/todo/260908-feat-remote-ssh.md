@@ -142,6 +142,52 @@ at sections). This ticket adds an anchor only if it adds a new
 
 ## Phases
 
+### Phase 0: Minimal Windows session bridge (verification enabler)
+
+Re-slice (2026-09-08, user-directed): to unblock autonomous over-ssh
+verification of desktop injection without a person driving each keystroke, the
+session bridge's minimal core is built ahead of Phase 1's ssh transport,
+Windows first. This stays inside the sage-approved architecture — the bridge
+pipe protocol, the ssh-session detection, `session=bridge`, and the no-bridge
+`abort` E_SESSION are all from Decisions above; only the build order and the
+first-slice size change, not the decisions. The Phase 1 -> Phase 2 dependency
+and their full scope stand; this phase pulls forward only what the verification
+loop needs and the later phases reuse it. (Design digest is intentionally left
+stale by this edit; no architecture decision changed.)
+
+Goals (Windows only, this slice):
+- `gotto-hando --bridge`: resident process on the named pipe
+  `\\.\pipe\gotto-hando-<username>` (current-user ACL); one run at a time; a
+  second instance for the same user exits 2; one line per run/error logged to
+  `%LOCALAPPDATA%\gotto-hando\bridge.log` (no sequence text, no images).
+  Protocol: one IR JSON document with the extra top-level `run` object in, the
+  same JSONL out (`start`, per-line objects, `done`/`abort`); an IR `"v"`
+  mismatch is `abort` E_CONNECT.
+- `gotto-hando local` ssh-session detection (process session != active console
+  session, or `SSH_CONNECTION`/`SSH_TTY` set): forward the IR to the bridge and
+  never execute input in-process; no bridge reachable = `abort` E_SESSION after
+  `start`, exit 4, with the help.txt hint. The `qinfo`/`qdisp`/`qmouse`/`sleep`/
+  `set`/comments-only run is answered in-process without a bridge and reports
+  `session=inactive`.
+- `qinfo` through the bridge reports `session=bridge`.
+- The bridge aborts the run and releases held keys when its caller disconnects.
+
+Out of scope (stays in Phase 1/2): the ssh-wrapped `<dest>` transport and its
+whole forwarded-option / `--expect-version` / `[f]`-inlining / capture-rewrite /
+`start`-timing surface; the macOS unix-socket bridge; `--request-perms` over the
+bridge; the LaunchAgent / Task Scheduler recipes; the byte-identical-output
+guarantee.
+
+Verification: unit/integration with an in-process or fake-pipe listener where a
+desktop is not required; then, autonomous over ssh once the user runs
+`gotto-hando --bridge` inside the console/RDP session: `gotto-hando local
+'qinfo'` reports `session=bridge`; a `txt[]...` then `k[c]a` `k[c]c` `qclip`
+round-trip confirms the injected text landed (no `cap` needed); with the bridge
+stopped the same run prints `start` then `abort` E_SESSION and exits 4, while a
+`qinfo`-only run still answers `session=inactive`; a caller that drops the
+connection mid-run holding a key has it released (visible in bridge.log and a
+following `qinfo`).
+
 ### Phase 1: ssh transport
 
 Goals: destination parsing, local parse/validate and `[f]` inlining with the
