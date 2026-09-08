@@ -2,6 +2,8 @@
 
 package darwin
 
+import "github.com/kang-sw/gotto-hando/internal/backend"
+
 // The probe interfaces are the Phase 1 test seam: Backend holds one field
 // per probe, defaulted to the real*Probe implementation in New() and
 // directly settable from same-package _test.go files (tests live in
@@ -38,6 +40,16 @@ type keyStateProbe interface {
 // RUN-TIME check inside keyboard.go, not a Preflight check.
 type secureInputProbe interface {
 	Enabled() bool
+}
+
+// displayProbe answers the active display list Preflight check 4 bounds
+// absolute/disp= coordinates against (help.txt COORDINATES :245-268). A
+// real display's geometry cannot be controlled from a test, so this is the
+// seam a preflight_test.go case uses to inject synthetic, non-(0,0)-origin
+// displays and prove disp=N is bounds-checked relative to its own
+// rectangle, not the desktop's.
+type displayProbe interface {
+	Active() []backend.DisplayGeom
 }
 
 // realSessionProbe backs sessionProbe with CGSessionCopyCurrentDictionary
@@ -87,3 +99,9 @@ func (realKeyStateProbe) AnyButtonHeld() bool {
 type realSecureInputProbe struct{}
 
 func (realSecureInputProbe) Enabled() bool { return isSecureEventInputEnabled() }
+
+// realDisplayProbe backs displayProbe with the real CGGetActiveDisplayList
+// query (backend.go's activeDisplays).
+type realDisplayProbe struct{}
+
+func (realDisplayProbe) Active() []backend.DisplayGeom { return activeDisplays() }

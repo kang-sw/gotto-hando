@@ -73,7 +73,7 @@ func (b *Backend) Preflight(ctx context.Context, seq *ir.Sequence) error {
 	// 4. Absolute and disp= coordinates inside the real desktop
 	// (help.txt:262-264; the r/w/% half is a run-time check,
 	// internal/engine/compose.go resolve()).
-	displays := activeDisplays()
+	displays := b.displays.Active()
 	deskX, deskY, deskW, deskH := unionBounds(displays)
 	for _, p := range collectPreflightPoints(seq) {
 		if p.XPct || p.YPct || p.Frame == "pointer" || p.Frame == "window" {
@@ -82,8 +82,17 @@ func (b *Backend) Preflight(ctx context.Context, seq *ir.Sequence) error {
 		var ok bool
 		switch p.Frame {
 		case "display":
+			// disp=N coordinates are DISPLAY-RELATIVE (help.txt:250-253:
+			// m[disp=1]0,0 is that display's top-left), so a valid point
+			// satisfies 0<=x<=W, 0<=y<=H against the display's own size -
+			// NOT the display's absolute X/Y origin (that origin is what
+			// internal/engine/compose.go resolve() adds to translate a
+			// disp= point to an absolute one before this backend ever
+			// sees it move; comparing the raw relative coordinate against
+			// the absolute rect here would wrongly reject e.g. disp=1
+			// 0,0 whenever display 1's origin isn't (0,0)).
 			ok = p.Disp >= 0 && p.Disp < len(displays) && pointInRect(p.X, p.Y,
-				displays[p.Disp].X, displays[p.Disp].Y, displays[p.Disp].W, displays[p.Disp].H)
+				0, 0, displays[p.Disp].W, displays[p.Disp].H)
 		default: // desktop
 			ok = pointInRect(p.X, p.Y, deskX, deskY, deskW, deskH)
 		}

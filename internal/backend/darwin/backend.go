@@ -17,10 +17,11 @@ import (
 // defaults to its real*Probe implementation in New(); same-package tests
 // override them directly (probes.go).
 type Backend struct {
-	session sessionProbe
-	perm    permissionProbe
-	keys    keyStateProbe
-	secure  secureInputProbe
+	session  sessionProbe
+	perm     permissionProbe
+	keys     keyStateProbe
+	secure   secureInputProbe
+	displays displayProbe
 
 	// evtSource is a single process-lifetime CGEventSourceRef, created once
 	// (kCGEventSourceStateHIDSystemState) and reused for every synthesized
@@ -58,6 +59,7 @@ func New() (*Backend, error) {
 		perm:         realPermissionProbe{},
 		keys:         realKeyStateProbe{},
 		secure:       realSecureInputProbe{},
+		displays:     realDisplayProbe{},
 		clickState:   map[string]int{},
 		lastButtonUp: map[string]time.Time{},
 	}

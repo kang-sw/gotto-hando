@@ -144,7 +144,23 @@ func (st *engineState) resolve(ctx context.Context, p ir.Point) (backend.Point, 
 			return backend.Point{}, err
 		}
 		ox, oy = pos.X, pos.Y
-	default: // desktop, display
+	case "display":
+		// disp=N is DISPLAY-RELATIVE (help.txt:250-253: m[disp=1]0,0 is
+		// the top-left of display 1), so the origin is that display's
+		// absolute (X,Y), not the desktop's (0,0) - and percents are
+		// against that display's own size, not the desktop's. An
+		// out-of-range display index is a bounds failure, matching
+		// checkBounds' own index guard below.
+		info := st.getInfo(ctx)
+		if p.Disp < 0 || p.Disp >= len(info.DisplayList) {
+			return backend.Point{}, fmt.Errorf("%w: display %d does not exist", errBounds, p.Disp)
+		}
+		d := info.DisplayList[p.Disp]
+		ox, oy = float64(d.X), float64(d.Y)
+		if p.XPct || p.YPct {
+			fw, fh = float64(d.W), float64(d.H)
+		}
+	default: // desktop
 		if p.XPct || p.YPct {
 			info := st.getInfo(ctx)
 			fw, fh = float64(info.DesktopW), float64(info.DesktopH)

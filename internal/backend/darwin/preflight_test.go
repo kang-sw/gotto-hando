@@ -28,20 +28,45 @@ type fakeKeys struct{ keyHeld, buttonHeld bool }
 func (f fakeKeys) AnyKeyHeld(codes []uint16) bool { return f.keyHeld }
 func (f fakeKeys) AnyButtonHeld() bool            { return f.buttonHeld }
 
+// fakeDisplays backs displayProbe with a fixed, synthetic display list -
+// the seam preflight_test.go uses to inject a non-(0,0)-origin display
+// without depending on this machine's real screen geometry.
+type fakeDisplays struct{ list []backend.DisplayGeom }
+
+func (f fakeDisplays) Active() []backend.DisplayGeom { return f.list }
+
 // newTestBackend builds a Backend with fake probes wired in and real FFI
-// initialized (Preflight's coordinate-bounds check unconditionally calls
-// activeDisplays(), which goes through the real CGGetActiveDisplayList
-// binding - dlopen succeeds regardless of GUI session lock state, so this
-// is safe to call from a locked/remote test session).
+// initialized (Preflight's coordinate-bounds check calls b.displays.Active(),
+// defaulted here to the real CGGetActiveDisplayList-backed probe - dlopen
+// succeeds regardless of GUI session lock state, so this is safe to call
+// from a locked/remote test session). Use newTestBackendWithDisplays instead
+// when the test needs to control display geometry.
 func newTestBackend(t *testing.T, session string, accessibility bool, keyHeld, buttonHeld bool) *Backend {
 	t.Helper()
 	if err := initFFI(); err != nil {
 		t.Fatalf("initFFI: %v", err)
 	}
 	return &Backend{
-		session: fakeSession{state: session},
-		perm:    fakePerm{accessibility: accessibility},
-		keys:    fakeKeys{keyHeld: keyHeld, buttonHeld: buttonHeld},
+		session:  fakeSession{state: session},
+		perm:     fakePerm{accessibility: accessibility},
+		keys:     fakeKeys{keyHeld: keyHeld, buttonHeld: buttonHeld},
+		displays: realDisplayProbe{},
+	}
+}
+
+// newTestBackendWithDisplays is newTestBackend but with a synthetic
+// displayProbe instead of the real one, for check-4 (disp=N bounds) tests
+// that need known, non-(0,0)-origin display geometry.
+func newTestBackendWithDisplays(t *testing.T, displays []backend.DisplayGeom) *Backend {
+	t.Helper()
+	if err := initFFI(); err != nil {
+		t.Fatalf("initFFI: %v", err)
+	}
+	return &Backend{
+		session:  fakeSession{state: "active"},
+		perm:     fakePerm{accessibility: true},
+		keys:     fakeKeys{},
+		displays: fakeDisplays{list: displays},
 	}
 }
 
@@ -137,5 +162,38 @@ func TestPreflightUnsupportedKeyName(t *testing.T) {
 	code := preflightCode(t, b.Preflight(context.Background(), seq))
 	if code != output.EInput {
 		t.Errorf("code = %s, want %s", code, output.EInput)
+	}
+}
+
+// synthOffsetDisplays is a two-display fixture: display 0 at origin (0,0),
+// display 1 to its right at (1440,0) - both 1440x900. Used to prove check 4
+// bounds a disp=N coordinate against the NAMED display's own rectangle
+// (0<=x<=W, 0<=y<=H), not its absolute X/Y origin (Critical review finding:
+// disp=N ignored the display's origin, so a valid m[disp=1]0,0 wrongly
+// aborted E_BOUNDS for any display whose origin wasn't (0,0)).
+var synthOffsetDisplays = []backend.DisplayGeom{
+	{X: 0, Y: 0, W: 1440, H: 900, Primary: true},
+	{X: 1440, Y: 0, W: 1440, H: 900},
+}
+
+// check 4: a disp=1 coordinate at that display's own top-left (0,0) must
+// NOT abort E_BOUNDS even though display 1's absolute origin is (1440,0) -
+// disp=N is display-relative (help.txt COORDINATES :250-253).
+func TestPreflightDisplayFrameCoordIsRelativeToItsOwnOrigin(t *testing.T) {
+	b := newTestBackendWithDisplays(t, synthOffsetDisplays)
+	seq := seqOf(ir.Op{Kind: ir.KindMove, Point: ir.Point{Frame: "display", Disp: 1, X: 0, Y: 0}})
+	if err := b.Preflight(context.Background(), seq); err != nil {
+		t.Fatalf("Preflight() = %v, want nil (disp=1 0,0 is display 1's own top-left, in bounds)", err)
+	}
+}
+
+// check 4: a coordinate outside the named display's own rectangle still
+// aborts E_BOUNDS (e.g. disp=1's width is 1440, so x=2000 is out of range).
+func TestPreflightDisplayFrameCoordOutOfRangeAborts(t *testing.T) {
+	b := newTestBackendWithDisplays(t, synthOffsetDisplays)
+	seq := seqOf(ir.Op{Kind: ir.KindMove, Point: ir.Point{Frame: "display", Disp: 1, X: 2000, Y: 0}})
+	code := preflightCode(t, b.Preflight(context.Background(), seq))
+	if code != output.EBounds {
+		t.Errorf("code = %s, want %s", code, output.EBounds)
 	}
 }
