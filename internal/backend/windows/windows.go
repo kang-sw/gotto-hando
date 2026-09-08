@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/kang-sw/gotto-hando/internal/backend"
@@ -62,25 +64,56 @@ func (b *Backend) Windows(ctx context.Context, sel ir.Selector) ([]backend.Windo
 	return filterWindows(all, sel), nil
 }
 
+// windowEnum holds the EnumWindows callback state. windows.NewCallback
+// allocates a permanent trampoline slot from a small, process-wide,
+// never-freed pool (syscall/x-sys has no matching "free callback" API); a
+// process that ever exhausts it panics ("too many callback functions").
+// Windows() is exactly the call internal/engine's pollForWindow loop makes
+// every 100ms for win[wait=]/open[wait=], and a resident `--bridge` process
+// serves many forwarded runs over its lifetime, so a fresh NewCallback per
+// Windows() call would accumulate until the bridge crashes. The trampoline
+// is therefore built exactly once (via sync.Once) and every enumeration
+// routes its results through this mutex-guarded package state instead of a
+// per-call captured closure - the mutex also serializes concurrent
+// enumerateWindows callers, which is required anyway since EnumWindows is
+// not reentrant against a single shared callback.
+var windowEnum struct {
+	once     sync.Once
+	callback uintptr
+	mu       sync.Mutex
+	result   []backend.Window
+	fg       windows.HWND
+}
+
+func windowEnumCallback() uintptr {
+	windowEnum.once.Do(func() {
+		windowEnum.callback = windows.NewCallback(func(hwnd windows.HWND, lparam uintptr) uintptr {
+			if w, ok := windowFromHWND(hwnd, windowEnum.fg); ok {
+				windowEnum.result = append(windowEnum.result, w)
+			}
+			return 1 // continue enumeration
+		})
+	})
+	return windowEnum.callback
+}
+
 // enumerateWindows walks every top-level window via EnumWindows and keeps
 // the ones passing the qwin filter, building each as a backend.Window. Pure
 // FFI glue (no selector matching here) so filterWindows/selectorMatches
 // stay unit-testable off a synthetic list, same split as darwin's Windows.
 func enumerateWindows() []backend.Window {
-	var all []backend.Window
-	fg := windows.GetForegroundWindow()
-	cb := windows.NewCallback(func(hwnd windows.HWND, lparam uintptr) uintptr {
-		if w, ok := windowFromHWND(hwnd, fg); ok {
-			all = append(all, w)
-		}
-		return 1 // continue enumeration
-	})
+	windowEnum.mu.Lock()
+	defer windowEnum.mu.Unlock()
+	windowEnum.fg = windows.GetForegroundWindow()
+	windowEnum.result = nil
 	// EnumWindows failing is not a hard error worth surfacing (an empty
 	// result behaves like "no windows"); its own error is intentionally
 	// dropped, matching darwin's Windows() returning (nil, nil) on an empty
 	// CGWindowListCopyWindowInfo.
-	_ = windows.EnumWindows(cb, nil)
-	return all
+	_ = windows.EnumWindows(windowEnumCallback(), nil)
+	out := windowEnum.result
+	windowEnum.result = nil
+	return out
 }
 
 // windowFromHWND applies the qwin filter to one HWND (visible, not cloaked,
@@ -181,6 +214,18 @@ func (b *Backend) Focus(ctx context.Context, w backend.Window) error {
 	if windows.GetForegroundWindow() == hwnd {
 		return nil
 	}
+
+	// The AttachThreadInput bypass only works when the OS thread that calls
+	// SetForegroundWindow is the SAME one attached to the foreground
+	// window's input queue. Go's async preemption (on by default) can
+	// otherwise migrate this goroutine to a different OS thread between
+	// AttachThreadInput(...,1) and the calls below, silently defeating the
+	// documented CAVEAT mechanism (help-windows.txt CAVEATS) - so the
+	// goroutine is pinned to its current OS thread for the retry's
+	// duration. curTID is read only after locking, so it names the thread
+	// every subsequent call in this function actually runs on.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	fg := windows.GetForegroundWindow()
 	var fgPID uint32

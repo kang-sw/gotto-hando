@@ -193,7 +193,17 @@ func captureRegionPixels(region captureRegion, frame string, window *backend.Win
 		}
 	}
 
-	return readDIBits(hdcMem, hBitmap, region.w, region.h)
+	// GetDIBits is documented to require that hBitmap not be selected into
+	// any device context when called; hBitmap is still selected into
+	// hdcMem here (the SelectObject restore above is deferred to function
+	// exit). Passing hdcScreen instead - a DC hBitmap was never selected
+	// into - is the well-established Go screenshot idiom that satisfies
+	// this in practice (GetDIBits only uses its hdc argument to resolve a
+	// device's default color format, which is irrelevant here since an
+	// explicit BITMAPINFOHEADER is supplied); calling GetDIBits(hdcMem,
+	// ...) while still selected is a real driver-dependent contract
+	// violation this avoids.
+	return readDIBits(hdcScreen, hBitmap, region.w, region.h)
 }
 
 // bitmapInfoHeader is a Win32 BITMAPINFOHEADER (wingdi.h); no color table

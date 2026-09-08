@@ -3,6 +3,7 @@
 package windows
 
 import (
+	"sync"
 	"unsafe"
 
 	"github.com/kang-sw/gotto-hando/internal/backend"
@@ -82,6 +83,41 @@ type realDisplayProbe struct{}
 
 func (realDisplayProbe) Active() []backend.DisplayGeom { return activeDisplays() }
 
+// displayEnum holds the EnumDisplayMonitors callback state, built exactly
+// once via sync.Once rather than fresh on every activeDisplays() call.
+// windows.NewCallback allocates a permanent trampoline slot from a small,
+// process-wide, never-freed pool; a fresh one per call would eventually
+// exhaust it and panic ("too many callback functions") in a long-lived
+// process (a resident `--bridge`, or any repeated qdisp/Preflight
+// coordinate-bounds check) - same fix, same reasoning as windows.go's
+// windowEnum for EnumWindows.
+var displayEnum struct {
+	once     sync.Once
+	callback uintptr
+	mu       sync.Mutex
+	result   []backend.DisplayGeom
+}
+
+func displayEnumCallback() uintptr {
+	displayEnum.once.Do(func() {
+		displayEnum.callback = windows.NewCallback(func(hMonitor uintptr, hdcMonitor uintptr, lprcMonitor *windows.Rect, dwData uintptr) uintptr {
+			var mi monitorInfo
+			mi.cbSize = uint32(unsafe.Sizeof(mi))
+			procGetMonitorInfoW.Call(hMonitor, uintptr(unsafe.Pointer(&mi)))
+			displayEnum.result = append(displayEnum.result, backend.DisplayGeom{
+				X:       int(mi.rcMonitor.Left),
+				Y:       int(mi.rcMonitor.Top),
+				W:       int(mi.rcMonitor.Right - mi.rcMonitor.Left),
+				H:       int(mi.rcMonitor.Bottom - mi.rcMonitor.Top),
+				Scale:   dpiScale(hMonitor),
+				Primary: mi.dwFlags&monitorinfofPrimary != 0,
+			})
+			return 1 // continue enumeration
+		})
+	})
+	return displayEnum.callback
+}
+
 // activeDisplays lists the active displays in qdisp order (0-based, the
 // order EnumDisplayMonitors's callback is invoked in - not required to
 // match any OS-native monitor numbering, only to be internally consistent
@@ -90,22 +126,12 @@ func (realDisplayProbe) Active() []backend.DisplayGeom { return activeDisplays()
 // COORDINATES: "qdisp lists each monitor's origin, size and scale (1.25 =
 // 125%)").
 func activeDisplays() []backend.DisplayGeom {
-	var out []backend.DisplayGeom
-	cb := windows.NewCallback(func(hMonitor uintptr, hdcMonitor uintptr, lprcMonitor *windows.Rect, dwData uintptr) uintptr {
-		var mi monitorInfo
-		mi.cbSize = uint32(unsafe.Sizeof(mi))
-		procGetMonitorInfoW.Call(hMonitor, uintptr(unsafe.Pointer(&mi)))
-		out = append(out, backend.DisplayGeom{
-			X:       int(mi.rcMonitor.Left),
-			Y:       int(mi.rcMonitor.Top),
-			W:       int(mi.rcMonitor.Right - mi.rcMonitor.Left),
-			H:       int(mi.rcMonitor.Bottom - mi.rcMonitor.Top),
-			Scale:   dpiScale(hMonitor),
-			Primary: mi.dwFlags&monitorinfofPrimary != 0,
-		})
-		return 1 // continue enumeration
-	})
-	procEnumDisplayMonitors.Call(0, 0, cb, 0)
+	displayEnum.mu.Lock()
+	defer displayEnum.mu.Unlock()
+	displayEnum.result = nil
+	procEnumDisplayMonitors.Call(0, 0, displayEnumCallback(), 0)
+	out := displayEnum.result
+	displayEnum.result = nil
 	return out
 }
 
