@@ -193,6 +193,10 @@ gotto-hando --help-windows - Windows: interactive session, session bridge
           may not honour synthetic input; verify with cap.
   CAVEAT: txt sends UTF-16 units (surrogate pairs in order); a per-
           character ms= gap applies per Unicode character.
+  CAVEAT: scroll[by=page] sends the same wheel notches as by=line - Windows
+          has no pixel/page-unit wheel injection API, only WHEEL_DELTA
+          notches interpreted by the receiving app using the user's own
+          "lines to scroll" setting.
   CAVEAT: The bridge runs with the privileges of the logged-on user (or
           Administrator when registered with highest privileges). exec via
           a <dest> runs with exactly those privileges; there is no
