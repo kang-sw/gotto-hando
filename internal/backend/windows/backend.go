@@ -36,6 +36,21 @@ func New() (*Backend, error) {
 	}, nil
 }
 
+// NewBridge returns a Backend for `gotto-hando --bridge`
+// (260908-feat-remote-ssh Phase 0): identical to New() except session is
+// bridgeSessionProbe{} instead of the real desktop/session-id probe - the
+// bridge process IS the interactive session, so qinfo answered through it
+// always reports session=bridge (help-windows.txt CHECK :17-19). keys and
+// displays stay the real probes: the bridge genuinely can query physical
+// key state and monitor geometry.
+func NewBridge() (*Backend, error) {
+	return &Backend{
+		session:  bridgeSessionProbe{},
+		keys:     realKeyStateProbe{},
+		displays: realDisplayProbe{},
+	}, nil
+}
+
 var _ backend.Backend = (*Backend)(nil)
 
 // Info answers qinfo (help.txt:431-434, help-windows.txt CHECK example

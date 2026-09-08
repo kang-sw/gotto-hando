@@ -170,10 +170,26 @@ func WriteStart(w io.Writer, jsonl bool, dest, outDir string) error {
 // "done" object either way.
 func WriteAbort(w io.Writer, jsonl bool, dest string, outDir string, code ErrorCode, msg string) error {
 	if !jsonl {
-		_, err := fmt.Fprintf(w, "abort: %s (%s)\n", msg, code)
-		return err
+		return WriteAbortEvent(w, false, code, msg)
 	}
 	if err := WriteStart(w, true, dest, outDir); err != nil {
+		return err
+	}
+	return WriteAbortEvent(w, true, code, msg)
+}
+
+// WriteAbortEvent writes just the abort object/line (plain: "abort: <msg>
+// (<code>)"; jsonl: the {"event":"abort",...} object) - the half of
+// WriteAbort that does NOT also write "start". Exported for callers that
+// print their own "start" first (the bridge's local forwarder,
+// 260908-feat-remote-ssh Phase 0: it prints its own start object using
+// local-only dest/out values before relaying a bridge-side abort, so
+// calling WriteAbort a second time would double-print start). WriteAbort
+// itself is WriteStart + WriteAbortEvent in jsonl mode, WriteAbortEvent
+// alone in plain mode (plain abort never prints "start" at all).
+func WriteAbortEvent(w io.Writer, jsonl bool, code ErrorCode, msg string) error {
+	if !jsonl {
+		_, err := fmt.Fprintf(w, "abort: %s (%s)\n", msg, code)
 		return err
 	}
 	return writeJSONObject(w, []KV{

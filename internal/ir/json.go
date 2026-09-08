@@ -51,7 +51,10 @@ func opNode(o *Op) node {
 	}
 	switch o.Kind {
 	case KindFocus:
-		pairs = append(pairs, kv{"selector", selectorNode(o.Selector)}, kv{"wait_ms", num(o.WaitMS)})
+		pairs = append(pairs,
+			kv{"selector", selectorNode(o.Selector)},
+			kv{"wait_ms", num(o.WaitMS)},
+			kv{"has_wait", boolean(o.HasWait)})
 	case KindQueryWindows:
 		pairs = append(pairs, kv{"selector", selectorNode(o.Selector)})
 	case KindKey:
@@ -98,7 +101,10 @@ func opNode(o *Op) node {
 	case KindScroll:
 		pairs = append(pairs, kv{"dir", str(o.ScrollDir)}, kv{"ticks", num(o.Ticks)}, kv{"by", str(o.ScrollBy)})
 	case KindOpen:
-		pairs = append(pairs, kv{"target", str(o.Target)}, kv{"wait_ms", num(o.WaitMS)})
+		pairs = append(pairs,
+			kv{"target", str(o.Target)},
+			kv{"wait_ms", num(o.WaitMS)},
+			kv{"has_wait", boolean(o.HasWait)})
 	case KindExec:
 		pairs = append(pairs, kv{"shell", boolean(o.Shell)})
 		if o.Shell {

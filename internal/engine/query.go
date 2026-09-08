@@ -112,6 +112,17 @@ func queryWindowsJSON(wins []backend.Window) []output.KV {
 	return []output.KV{{Key: "windows", Val: arr}}
 }
 
+// formatFocusDetail builds win's plain Detail line (help.txt OUTPUT :600):
+// "id=<n> app=<s> matched=<n> <x>,<y> <w>x<h> <quoted title>". Factored out
+// of doFocus (run.go) so ResultDetailFromJSON (wire_result.go) can reuse
+// the identical format for the bridge forwarder's plain-mode
+// reconstruction of a win line received over the JSONL-only bridge wire
+// (260908-feat-remote-ssh Phase 0).
+func formatFocusDetail(w backend.Window, matched int) string {
+	return fmt.Sprintf("id=%d app=%s matched=%d %d,%d %dx%d %q",
+		w.ID, w.App, matched, w.X, w.Y, w.W, w.H, w.Title)
+}
+
 // focusJSON is win's --jsonl command-specific fields (spec-consistent
 // inference; help.txt JSONL shows no verbatim win example): the focused
 // window's identity/geometry plus matched=N.

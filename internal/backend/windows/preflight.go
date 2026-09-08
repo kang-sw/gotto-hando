@@ -42,13 +42,10 @@ var injectsInputGated = map[ir.Kind]bool{
 // CHECK). It never prompts (perms=n/a - Windows has no permission dialogs
 // for input/capture).
 func (b *Backend) Preflight(ctx context.Context, seq *ir.Sequence) error {
-	needsSession := false
+	needsSession := RequiresSession(seq)
 	needsInputInjection := false
 	for i := range seq.Ops {
 		op := &seq.Ops[i]
-		if !exemptFromSession[op.Kind] {
-			needsSession = true
-		}
 		if injectsInputGated[op.Kind] || (op.Kind == ir.KindOpen && op.HasWait) {
 			needsInputInjection = true
 		}
@@ -114,6 +111,21 @@ func (b *Backend) Preflight(ctx context.Context, seq *ir.Sequence) error {
 	}
 
 	return nil
+}
+
+// RequiresSession reports whether seq contains any op outside
+// exemptFromSession - the same exempt-kind check Preflight's check 1 uses,
+// exported so cmd/gotto-hando's `local` dispatch can make the identical
+// forward-vs-in-process routing decision (260908-feat-remote-ssh Phase 0,
+// shouldForwardToBridge) from one source of truth instead of re-deriving
+// the kind list.
+func RequiresSession(seq *ir.Sequence) bool {
+	for i := range seq.Ops {
+		if !exemptFromSession[seq.Ops[i].Kind] {
+			return true
+		}
+	}
+	return false
 }
 
 func pointInRect(x, y float64, rx, ry, rw, rh int) bool {

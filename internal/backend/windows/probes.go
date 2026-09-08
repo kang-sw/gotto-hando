@@ -52,6 +52,17 @@ type realSessionProbe struct{}
 
 func (realSessionProbe) State() string { return sessionState() }
 
+// bridgeSessionProbe backs a Backend built by NewBridge() (backend.go):
+// the bridge process (`gotto-hando --bridge`) genuinely runs inside the
+// interactive GUI session, so qinfo answered through it always reports
+// session=bridge (help-windows.txt CHECK :17-19) regardless of the actual
+// desktop/session-id probe result - which is why NewBridge() only swaps
+// this one probe and keeps the real keys/displays probes (the bridge
+// process really can query physical key state and monitor geometry).
+type bridgeSessionProbe struct{}
+
+func (bridgeSessionProbe) State() string { return "bridge" }
+
 // realKeyStateProbe backs keyStateProbe with GetAsyncKeyState.
 type realKeyStateProbe struct{}
 

@@ -32,6 +32,22 @@ type RunOptions struct {
 	// --jsonl object ("data"/"fmt") instead of writing a file
 	// (help.txt --inline-captures :72-77).
 	InlineCaptures bool
+
+	// OnResult, when non-nil, is called synchronously right after each
+	// line's Result is computed, before the inter-line delay - the bridge
+	// (internal/bridge, 260908-feat-remote-ssh Phase 0) uses this to stream
+	// JSONL per line instead of waiting for the whole Summary. nil is a
+	// no-op, so every existing caller (the local-run path, every other
+	// test) is unaffected.
+	//
+	// INVARIANT: every value appended to Summary.Results MUST also be
+	// passed to OnResult (when non-nil) exactly once - the streaming
+	// consumer (the bridge) relies solely on OnResult and never iterates
+	// Summary.Results, so a Results append without a matching OnResult call
+	// (a skip branch, the cap-on-error extra, the end-of-run auto-release
+	// warns) is silently dropped over the wire while still printing locally.
+	// New Results appends below must keep this pairing.
+	OnResult func(output.Result)
 }
 
 // Summary is the finished run: the per-line results, the auto-release warns,
@@ -110,15 +126,37 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 
 	for i := range seq.Ops {
 		op := &seq.Ops[i]
-		if failed && !opt.KeepGoing {
-			sum.Results = append(sum.Results, output.Result{Line: op.Line, Status: "skip", Cmd: kindCmd[op.Kind]})
+		// A cancelled ctx means the caller is gone (the bridge's
+		// disconnect-detection path, internal/bridge): stop unconditionally,
+		// independent of -k/KeepGoing - once the caller is gone, "keep
+		// going" is moot. releaseAll below still runs unconditionally, so
+		// held keys/buttons are released the same as any other fail-fast
+		// stop.
+		if ctx.Err() != nil {
+			r := output.Result{Line: op.Line, Status: "skip", Cmd: kindCmd[op.Kind]}
+			sum.Results = append(sum.Results, r)
 			sum.Skip++
+			if opt.OnResult != nil {
+				opt.OnResult(r)
+			}
+			continue
+		}
+		if failed && !opt.KeepGoing {
+			r := output.Result{Line: op.Line, Status: "skip", Cmd: kindCmd[op.Kind]}
+			sum.Results = append(sum.Results, r)
+			sum.Skip++
+			if opt.OnResult != nil {
+				opt.OnResult(r)
+			}
 			continue
 		}
 		opStart := time.Now()
 		r := st.execute(ctx, op)
 		r.TMS = time.Since(opStart).Milliseconds()
 		sum.Results = append(sum.Results, r)
+		if opt.OnResult != nil {
+			opt.OnResult(r)
+		}
 		switch r.Status {
 		case "err":
 			sum.Err++
@@ -130,6 +168,9 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 			if opt.CapOnError {
 				cr := st.captureOnError(ctx, op.Line)
 				sum.Results = append(sum.Results, cr)
+				if opt.OnResult != nil {
+					opt.OnResult(cr)
+				}
 				if cr.Status == "err" {
 					sum.Err++
 				} else {
@@ -151,10 +192,14 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 	n, rels := st.held.releaseAll(ctx, be)
 	sum.HeldReleased = n
 	for _, ar := range rels {
-		sum.Results = append(sum.Results, output.Result{
+		r := output.Result{
 			Line: ar.line, Status: "warn", Cmd: ar.cmd, Src: ar.src,
 			Detail: fmt.Sprintf("auto-released %s", ar.what),
-		})
+		}
+		sum.Results = append(sum.Results, r)
+		if opt.OnResult != nil {
+			opt.OnResult(r)
+		}
 	}
 
 	sum.Done = output.Done{OK: sum.OK, Err: sum.Err, Skip: sum.Skip, HeldReleased: n,
@@ -270,6 +315,7 @@ func (st *engineState) execute(ctx context.Context, op *ir.Op) output.Result {
 		}
 		res.AlwaysShow = true
 		res.Detail = s
+		res.JSON = []output.KV{{Key: "text", Val: s}}
 	case ir.KindFocus:
 		return st.doFocus(ctx, op, res, fail)
 	case ir.KindQueryWindows:
@@ -355,8 +401,7 @@ func (st *engineState) doFocus(ctx context.Context, op *ir.Op, res output.Result
 	}
 	// OUTPUT win line (help.txt :600): id/app/matched, then the window's
 	// origin, size and quoted title.
-	res.Detail = fmt.Sprintf("id=%d app=%s matched=%d %d,%d %dx%d %q",
-		w.ID, w.App, len(wins), w.X, w.Y, w.W, w.H, w.Title)
+	res.Detail = formatFocusDetail(w, len(wins))
 	res.JSON = focusJSON(w, len(wins))
 	return res
 }

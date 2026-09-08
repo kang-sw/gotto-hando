@@ -179,6 +179,36 @@ func TestPreflightDisplayFrameCoordIsRelativeToItsOwnOrigin(t *testing.T) {
 	}
 }
 
+// TestRequiresSessionExemptOnlySequenceIsFalse: a sequence made only of the
+// exempt kinds (qinfo/qdisp/qmouse/sleep/set) never requires a session -
+// cmd/gotto-hando's `local` dispatch (shouldForwardToBridge,
+// 260908-feat-remote-ssh Phase 0) relies on this to answer such runs
+// in-process even when remote, per the ticket's own exception.
+func TestRequiresSessionExemptOnlySequenceIsFalse(t *testing.T) {
+	seq := seqOf(
+		ir.Op{Kind: ir.KindQueryInfo},
+		ir.Op{Kind: ir.KindQueryDisp},
+		ir.Op{Kind: ir.KindQueryMouse},
+		ir.Op{Kind: ir.KindSleep},
+		ir.Op{Kind: ir.KindSet},
+	)
+	if RequiresSession(seq) {
+		t.Fatal("RequiresSession() = true, want false for an exempt-only sequence")
+	}
+}
+
+// TestRequiresSessionMixedSequenceIsTrue: one non-exempt op anywhere in the
+// sequence makes RequiresSession true.
+func TestRequiresSessionMixedSequenceIsTrue(t *testing.T) {
+	seq := seqOf(
+		ir.Op{Kind: ir.KindQueryInfo},
+		ir.Op{Kind: ir.KindKey, Keys: [][]string{{"a"}}},
+	)
+	if !RequiresSession(seq) {
+		t.Fatal("RequiresSession() = false, want true (sequence has a non-exempt op)")
+	}
+}
+
 func TestPreflightDisplayFrameCoordOutOfRangeAborts(t *testing.T) {
 	b := newTestBackendWithDisplays(t, synthOffsetDisplays)
 	seq := seqOf(ir.Op{Kind: ir.KindMove, Point: ir.Point{Frame: "display", Disp: 1, X: 2000, Y: 0}})

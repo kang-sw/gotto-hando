@@ -9,17 +9,18 @@ import (
 	"github.com/kang-sw/gotto-hando/internal/syntax"
 )
 
-// exampleDoc is the == IR JSON == document from assets/help.txt (:630-660),
-// copied verbatim. The golden test parses the same nine source lines and
-// asserts the --ir output is structurally identical (field values and
-// presence), independent of key order and float formatting (1 vs 1.0).
+// exampleDoc is the == IR JSON == document from assets/help.txt, copied
+// verbatim (including the win/open "has_wait" field). The golden test
+// parses the same nine source lines and asserts the --ir output is
+// structurally identical (field values and presence), independent of key
+// order and float formatting (1 vs 1.0).
 const exampleDoc = `
 {
   "v": 1,
   "ops": [
     {"line": 1, "src": "win[]Blender", "op": "focus",
      "selector": {"kind": "title", "value": "Blender", "regex": false},
-     "wait_ms": 0},
+     "wait_ms": 0, "has_wait": false},
     {"line": 2, "src": "k[c]v", "op": "key", "mods": ["ctrl"],
      "keys": [["v"]], "repeat": 1, "gap_ms": 30},
     {"line": 3, "src": "txt[ms=66]hello, world!", "op": "text",
@@ -41,7 +42,7 @@ const exampleDoc = `
      "shell": true, "cmd": "dir /b", "noerr": false,
      "timeout_ms": 10000},
     {"line": 9, "src": "open[]Blender", "op": "open",
-     "target": "Blender", "wait_ms": 0}
+     "target": "Blender", "wait_ms": 0, "has_wait": false}
   ],
   "defaults": {"delay_ms": 100, "text_interval_ms": 0, "key_gap_ms": 30}
 }`

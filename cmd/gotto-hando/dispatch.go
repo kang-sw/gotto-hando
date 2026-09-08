@@ -20,7 +20,10 @@ import (
 //     everything else, exit 0.
 //  2. --version (and no help flag) -> print the version, exit 0.
 //  3. --expect-version mismatch -> stderr message, exit 3.
-//  4. --bridge -> not implemented, abort E_VALIDATE, exit 2.
+//  4. --bridge -> runs the session bridge (windows: the real named-pipe
+//     listener, 260908-feat-remote-ssh Phase 0; every other GOOS: still
+//     not implemented, abort E_VALIDATE, exit 2 - unchanged from before
+//     this ticket).
 //  5. --remote-bin / --inline-captures / --request-perms -> not
 //     implemented, abort E_VALIDATE, exit 2.
 //  6. -f and [line ...] both given -> abort E_VALIDATE, exit 2.
@@ -87,7 +90,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	if opts.Bridge {
-		return abort(output.EValidate, "session bridge not implemented")
+		return runBridge(opts, stdout, stderr, abort)
 	}
 
 	if opts.HasRemoteBin {
@@ -120,6 +123,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if len(diags) > 0 {
 			writeDiagnostics(stderr, diags)
 			return output.ExitValidation
+		}
+
+		// Windows-only routing (260908-feat-remote-ssh Phase 0): an
+		// ssh-started (or otherwise non-console) session forwards
+		// non-exempt runs to `gotto-hando --bridge` instead of touching
+		// the real local backend at all - shouldForwardToBridge is false
+		// on every other GOOS, so this branch is a no-op there
+		// (help-remote.txt SESSION BRIDGE "Detection").
+		if shouldForwardToBridge(seq) {
+			return forwardToBridge(opts, seq, stdout, stderr, abort)
 		}
 
 		be, err := newLocalBackend()

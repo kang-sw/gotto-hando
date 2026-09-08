@@ -134,3 +134,31 @@ func TestQueryMouseFormat(t *testing.T) {
 		t.Errorf("JSON = %+v, want %+v", r.JSON, wantJSON)
 	}
 }
+
+// TestQueryClipFormat locks in qclip's "text" JSON field (help.txt :632-636,
+// "qclip[f] likewise returns 'text' and no path") - a pre-existing bug fixed
+// as part of 260908-feat-remote-ssh Phase 0: res.JSON was never set, so
+// qclip's clipboard text was silently absent from --jsonl output, which
+// blocks the bridge's own verification round-trip (txt -> k[c]a -> k[c]c ->
+// qclip read back through the JSONL-only wire).
+func TestQueryClipFormat(t *testing.T) {
+	seq := parse(t, "qclip")
+	be := &dryrun.Backend{Clipboard: "hello-bridge"}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+
+	if len(sum.Results) != 1 || sum.Results[0].Status != "ok" {
+		t.Fatalf("Results = %+v, want a single ok result", sum.Results)
+	}
+	r := sum.Results[0]
+
+	if r.Detail != "hello-bridge" {
+		t.Errorf("Detail = %q, want %q", r.Detail, "hello-bridge")
+	}
+	if !r.AlwaysShow {
+		t.Error("AlwaysShow = false, want true")
+	}
+	wantJSON := []output.KV{{Key: "text", Val: "hello-bridge"}}
+	if !reflect.DeepEqual(r.JSON, wantJSON) {
+		t.Errorf("JSON = %+v, want %+v", r.JSON, wantJSON)
+	}
+}
