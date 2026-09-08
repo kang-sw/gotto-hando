@@ -281,9 +281,7 @@ func (st *engineState) execute(ctx context.Context, op *ir.Op) output.Result {
 		res.Extra = formatQueryWindows(wins)
 		res.JSON = queryWindowsJSON(wins)
 	case ir.KindOpen:
-		if err := st.be.Open(ctx, op.Target); err != nil {
-			return fail(output.EExec, err.Error())
-		}
+		return st.doOpen(ctx, op, res, fail)
 	case ir.KindExec:
 		return st.doExec(ctx, op, res, fail)
 	case ir.KindCapture:
@@ -366,20 +364,66 @@ func (st *engineState) doFocus(ctx context.Context, op *ir.Op, res output.Result
 func (st *engineState) doExec(ctx context.Context, op *ir.Op, res output.Result, fail func(output.ErrorCode, string) output.Result) output.Result {
 	req := backend.ExecReq{Argv: op.Argv, Cmd: op.Cmd, Shell: op.Shell,
 		Timeout: time.Duration(op.TimeoutMS) * time.Millisecond}
+	start := time.Now()
 	r, err := st.be.Exec(ctx, req)
+	ms := time.Since(start).Milliseconds()
 	if err != nil {
+		// Spawn failure / unexpected Wait error only - a timeout or a
+		// non-zero exit are both reported through r with a nil err (darwin
+		// exec.go's contract), so this path never sees them.
 		return fail(output.EExec, err.Error())
 	}
+	res.Detail = formatExecDetail(r, ms)
+	res.Extra = formatExecOutputLines(r)
+	res.JSON = execJSON(r)
 	// timeout expiry is E_TIMEOUT and noerr never softens it (help.txt:390,
-	// :536); it is checked before the exit-code softening below.
+	// :536); it is checked before the exit-code softening below. The two
+	// err branches below set res.Status/ErrCode/ErrMsg directly instead of
+	// calling fail(...): fail closes over execute()'s own res variable, not
+	// this by-value res copy, so routing through it here would silently
+	// drop the Detail/Extra/JSON just attached above (help.txt: "Output
+	// lines also follow err results (non-zero exit, timeout)").
 	if r.TimedOut {
-		return fail(output.ETimeout, fmt.Sprintf("exec timed out after %s", req.Timeout))
+		res.Status = "err"
+		res.ErrCode = output.ETimeout
+		res.ErrMsg = fmt.Sprintf("exec timed out after %s", req.Timeout)
+		return res
 	}
 	if r.Exit != 0 && !op.Noerr {
-		return fail(output.EExec, fmt.Sprintf("exit=%d", r.Exit))
+		res.Status = "err"
+		res.ErrCode = output.EExec
+		res.ErrMsg = fmt.Sprintf("exit=%d", r.Exit)
+		return res
 	}
-	res.Detail = fmt.Sprintf("exit=%d", r.Exit)
 	res.AlwaysShow = true
+	return res
+}
+
+// doOpen runs open (help.txt open :363-368): launch, then - only when
+// wait= was given (op.HasWait) - poll for a window of the app through the
+// shared 100ms pollForWindow loop (the same mechanism win[wait=] uses).
+// Deliberately does not call st.be.Focus and does not set st.window; only
+// win "becomes the current window" (help.txt:356-357) - open is never
+// mentioned there, and without wait= it does nothing after Open() succeeds
+// (help.txt: "No default delay ... use open[wait=5s] ... to wait for the
+// UI").
+func (st *engineState) doOpen(ctx context.Context, op *ir.Op, res output.Result, fail func(output.ErrorCode, string) output.Result) output.Result {
+	if err := st.be.Open(ctx, op.Target); err != nil {
+		return fail(output.EExec, err.Error())
+	}
+	if !op.HasWait {
+		return res
+	}
+	sel := openAppSelector(op.Target)
+	wins, err := pollForWindow(ctx, op.WaitMS, realClock{}, func() ([]backend.Window, error) {
+		return st.be.Windows(ctx, sel)
+	})
+	if err != nil {
+		return fail(output.ENoWindow, err.Error())
+	}
+	if len(wins) == 0 {
+		return fail(output.ENoWindow, fmt.Sprintf("no window of %q appeared", op.Target))
+	}
 	return res
 }
 
