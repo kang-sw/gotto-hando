@@ -114,13 +114,52 @@ func TestMixedFileAndArgvExitsTwo(t *testing.T) {
 	}
 }
 
-// TestNotImplementedOptionsExitTwo covers every later-ticket option
-// (ticket Decisions: --bridge, --remote-bin, --inline-captures,
-// --request-perms) and the remote-dest path, each asserting exit 2 with
-// its exact stderr message. --check/--ir are now implemented (Phase 2) and
-// covered by analyze_test.go instead; the local-dest path is now
-// implemented on darwin (260907-feat-darwin-backend Phase 1) and covered
-// by TestLocalDestDispatch below instead of this table.
+// TestRequestPermsPhase2 covers --request-perms, implemented on darwin in
+// Phase 2 (help.txt --request-perms :91-108): on darwin `local
+// --request-perms` prints a single perms= line to stdout and exits 0 (both
+// granted) or 4 (either missing) - the exact code is environment-dependent
+// (this dev Mac is typically screen-locked with the grants absent, so 4),
+// so the test accepts either. On every other GOOS it stays a usage error,
+// abort E_VALIDATE / exit 2 ("--request-perms is macOS only").
+func TestRequestPermsPhase2(t *testing.T) {
+	out, errOut, code := runBin(t, "", "local", "--request-perms")
+	if runtime.GOOS == "darwin" {
+		if code != 0 && code != 4 {
+			t.Fatalf("exit = %d, want 0 or 4 (stderr=%q)", code, errOut)
+		}
+		if !strings.HasPrefix(out, "perms=accessibility:") {
+			t.Fatalf("stdout = %q, want a perms=accessibility:... line", out)
+		}
+		return
+	}
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 on %s (stderr=%q)", code, runtime.GOOS, errOut)
+	}
+	if want := "abort: --request-perms is macOS only (E_VALIDATE)\n"; errOut != want {
+		t.Fatalf("stderr = %q, want %q", errOut, want)
+	}
+}
+
+// TestInlineCapturesAcceptedPhase2 confirms --inline-captures is accepted
+// (Phase 2) rather than an exit-2 usage error: a query-only run with the
+// flag completes normally (help.txt --inline-captures :72-77, "Also
+// accepted with plain local").
+func TestInlineCapturesAcceptedPhase2(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("local run needs the darwin backend; other GOOS has no backend yet")
+	}
+	_, errOut, code := runBin(t, "", "local", "--inline-captures", "qinfo")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (stderr=%q)", code, errOut)
+	}
+}
+
+// TestNotImplementedOptionsExitTwo covers the still-later-ticket options
+// (--bridge, --remote-bin) and the remote-dest path, each asserting exit 2
+// with its exact stderr message. --check/--ir are implemented (Phase 2) and
+// covered by analyze_test.go; the local-dest path is covered by
+// TestLocalDestDispatch below; --inline-captures/--request-perms are
+// implemented in Phase 2 and covered by the two tests above.
 func TestNotImplementedOptionsExitTwo(t *testing.T) {
 	cases := []struct {
 		name string
@@ -129,8 +168,6 @@ func TestNotImplementedOptionsExitTwo(t *testing.T) {
 	}{
 		{"bridge", []string{"--bridge"}, "abort: session bridge not implemented (E_VALIDATE)\n"},
 		{"remote-bin", []string{"local", "--remote-bin", "/opt/gotto-hando"}, "abort: --remote-bin not implemented (E_VALIDATE)\n"},
-		{"inline-captures", []string{"local", "--inline-captures"}, "abort: --inline-captures not implemented (E_VALIDATE)\n"},
-		{"request-perms", []string{"local", "--request-perms"}, "abort: --request-perms not implemented (E_VALIDATE)\n"},
 		{"remote-dest", []string{"winbox", "qinfo"}, "abort: remote destinations not implemented (E_VALIDATE)\n"},
 	}
 	for _, c := range cases {
