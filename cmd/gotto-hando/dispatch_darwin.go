@@ -39,6 +39,17 @@ func requestPerms(opts parsedOptions, stdout, stderr io.Writer, abort func(outpu
 	return output.ExitPreflight
 }
 
+// runBridge is macOS's session-bridge entry point (dispatch.go's
+// opts.Bridge branch). The macOS unix-socket bridge is Phase 1/2 (ticket
+// Out of Scope: "The macOS unix-socket bridge ... (Phase 1/2)"); today's
+// abort - message, code, exit - is reproduced byte-for-byte via the same
+// abort closure dispatch.go already builds, so this is not an observable
+// regression from the inline abort this replaced (dispatch.go:89-91
+// before this ticket).
+func runBridge(opts parsedOptions, stdout, stderr io.Writer, abort func(output.ErrorCode, string) int) int {
+	return abort(output.EValidate, "session bridge not implemented")
+}
+
 func okMissing(ok bool) string {
 	if ok {
 		return "ok"

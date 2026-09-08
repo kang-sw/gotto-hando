@@ -24,3 +24,13 @@ func newLocalBackend() (backend.Backend, error) {
 func requestPerms(opts parsedOptions, stdout, stderr io.Writer, abort func(output.ErrorCode, string) int) int {
 	return abort(output.EValidate, "--request-perms is macOS only")
 }
+
+// runBridge has no listener outside windows yet (dispatch.go's
+// opts.Bridge branch; the windows named-pipe bridge is 260908-feat-remote-
+// ssh Phase 0). Today's abort - message, code, exit - is reproduced
+// byte-for-byte via the same abort closure dispatch.go already builds, so
+// this is not an observable regression from the inline abort this
+// replaced (dispatch.go:89-91 before this ticket).
+func runBridge(opts parsedOptions, stdout, stderr io.Writer, abort func(output.ErrorCode, string) int) int {
+	return abort(output.EValidate, "session bridge not implemented")
+}
