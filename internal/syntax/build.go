@@ -172,7 +172,7 @@ func buildOp(line int, src string, spec cmdSpec, m modSet, payload string, paylo
 		return buildExec(line, src, m, trimmed, payloadCol, op)
 
 	case plCap:
-		return buildCap(line, src, m, frame, disp, op)
+		return buildCap(line, src, m, frame, disp, trimmed, op)
 
 	case plSleep:
 		if trimmed == "" {
@@ -351,7 +351,7 @@ func buildExec(line int, src string, m modSet, trimmed string, payloadCol int, o
 	return op, nil
 }
 
-func buildCap(line int, src string, m modSet, frame string, disp int, op *ir.Op) (*ir.Op, *ir.Diagnostic) {
+func buildCap(line int, src string, m modSet, frame string, disp int, payload string, op *ir.Op) (*ir.Op, *ir.Diagnostic) {
 	op.Frame = frame
 	op.Disp = disp
 	op.Format = "png"
@@ -359,6 +359,11 @@ func buildCap(line int, src string, m modSet, frame string, disp int, op *ir.Op)
 	op.Label = "cap"
 	op.CapCount = 1
 	op.CapInterval = 100
+	// The optional payload is an explicit LOCAL output path that overrides
+	// the automatic <out>/NNNN-label-timestamp.png name (help.txt cap
+	// path :413-416, "A cap payload overrides the path"). Like every path
+	// it stays in FilePath, which the wire IR never carries (ops.go).
+	op.FilePath = payload
 	if v, has := m.kvs["rect"]; has {
 		r, msg := parseRect(v)
 		if msg != "" {

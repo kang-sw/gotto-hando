@@ -192,9 +192,12 @@ func (b *Backend) nextClickState(bt backend.Button) int {
 // by=page: "one page = the current window's height (the display's height
 // when no current window), sent in pixel units." That pixel-units clause
 // is authoritative for by=page specifically; it does not contradict
-// CONCEPT.md's line-unit statement, which is about by=line.
-func (b *Backend) Scroll(ctx context.Context, dir backend.Dir, ticks int, by backend.ScrollUnit) error {
-	units, amount := scrollUnitsAndAmount(ticks, by, b.pageHeightPixels())
+// CONCEPT.md's line-unit statement, which is about by=line. The page
+// height itself is resolved GOOS-agnostically in the engine (from the
+// current window, else the primary display) and threaded in as
+// pageHeightPixels, so windows Phase 2 reuses the same semantics.
+func (b *Backend) Scroll(ctx context.Context, dir backend.Dir, ticks int, by backend.ScrollUnit, pageHeightPixels int) error {
+	units, amount := scrollUnitsAndAmount(ticks, by, pageHeightPixels)
 	var vertical, horizontal int32
 	switch dir {
 	case "up":
@@ -241,20 +244,4 @@ func scrollUnitsAndAmount(ticks int, by backend.ScrollUnit, pageHeightPixels int
 		return cgScrollEventUnitPixel, ticks * pageHeightPixels
 	}
 	return cgScrollEventUnitLine, ticks
-}
-
-// pageHeightPixels is one page's worth of pixel-unit scroll: the current
-// window's height, or the primary display's height when there is no
-// current window (ticket Decision, "one page = the current window's
-// height (the display's height when no current window)"). Phase 1 has no
-// win yet (st.window is always nil in the engine), so this always reads
-// the primary display's height.
-func (b *Backend) pageHeightPixels() int {
-	displays := activeDisplays()
-	for _, d := range displays {
-		if d.Primary && d.H > 0 {
-			return d.H
-		}
-	}
-	return 900 // conservative fallback if no primary display is reported
 }

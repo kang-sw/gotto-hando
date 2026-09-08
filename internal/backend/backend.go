@@ -9,10 +9,19 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/kang-sw/gotto-hando/internal/ir"
 )
+
+// ErrBounds is the sentinel a backend wraps (fmt.Errorf("%w: ...",
+// backend.ErrBounds)) when a Capture region resolves outside its frame -
+// an out-of-range disp=N, or a rect= / w-frame region that does not fit
+// the display/window/desktop (help.txt COORDINATES :262-264: "a coordinate
+// outside its frame is E_BOUNDS"). The engine maps a Capture error
+// carrying it to E_BOUNDS instead of the default E_CAPTURE.
+var ErrBounds = errors.New("coordinate outside bounds")
 
 // Button is a mouse button (help.txt:325).
 type Button string
@@ -143,7 +152,13 @@ type Backend interface {
 	MouseMove(ctx context.Context, p Point, dur time.Duration) error
 	ButtonDown(ctx context.Context, b Button) error
 	ButtonUp(ctx context.Context, b Button) error
-	Scroll(ctx context.Context, dir Dir, ticks int, by ScrollUnit) error
+	// Scroll scrolls at the current pointer position (help.txt:339-341).
+	// pageHeightPixels is the resolved height of one "page" for by=page
+	// (the current window's height when a win is focused, else the primary
+	// display's height); the engine resolves it GOOS-agnostically so every
+	// backend gets identical by=page semantics (help.txt scroll Decision).
+	// It is ignored for by=line.
+	Scroll(ctx context.Context, dir Dir, ticks int, by ScrollUnit, pageHeightPixels int) error
 
 	Windows(ctx context.Context, sel ir.Selector) ([]Window, error)
 	Focus(ctx context.Context, w Window) error

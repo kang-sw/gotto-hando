@@ -68,8 +68,8 @@ func (b *Backend) ButtonUp(_ context.Context, bt backend.Button) error {
 	return b.record("ButtonUp %s", bt)
 }
 
-func (b *Backend) Scroll(_ context.Context, dir backend.Dir, ticks int, by backend.ScrollUnit) error {
-	return b.record("Scroll %s %d %s", dir, ticks, by)
+func (b *Backend) Scroll(_ context.Context, dir backend.Dir, ticks int, by backend.ScrollUnit, pageHeightPixels int) error {
+	return b.record("Scroll %s %d %s page=%d", dir, ticks, by, pageHeightPixels)
 }
 
 func (b *Backend) Windows(_ context.Context, sel ir.Selector) ([]backend.Window, error) {

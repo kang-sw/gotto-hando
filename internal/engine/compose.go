@@ -20,14 +20,26 @@ import (
 // the default E_INPUT.
 var errBounds = errors.New("coordinate outside bounds")
 
-// boundsAwareCode picks E_BOUNDS for a resolve() bounds failure, else the
-// default E_INPUT every other move/click/drag error already used
+// errNoWindow is resolve()'s sentinel for a w-frame coordinate when there
+// is no current window at all - neither a win-focused one (st.window) nor
+// the OS-focused fallback (help.txt COORDINATES :254). It is distinct from
+// errBounds (a coordinate that resolved against a real window but fell
+// outside it): no window is E_NOWINDOW, out-of-window is E_BOUNDS.
+var errNoWindow = errors.New("no current window")
+
+// boundsAwareCode maps a resolve() failure to its error code: E_NOWINDOW
+// for a missing current window, E_BOUNDS for an out-of-bounds coordinate,
+// else the default E_INPUT every other move/click/drag error already used
 // (run.go's KindMove/KindClick/KindButtonDown/KindDrag call sites).
 func boundsAwareCode(err error) output.ErrorCode {
-	if errors.Is(err, errBounds) {
+	switch {
+	case errors.Is(err, errNoWindow):
+		return output.ENoWindow
+	case errors.Is(err, errBounds):
 		return output.EBounds
+	default:
+		return output.EInput
 	}
-	return output.EInput
 }
 
 // pressMods presses the command's modifier flags in canonical order and
@@ -134,10 +146,12 @@ func (st *engineState) resolve(ctx context.Context, p ir.Point) (backend.Point, 
 	var ox, oy, fw, fh float64
 	switch p.Frame {
 	case "window":
-		if st.window != nil {
-			ox, oy = float64(st.window.X), float64(st.window.Y)
-			fw, fh = float64(st.window.W), float64(st.window.H)
+		win := st.currentWindow(ctx)
+		if win == nil {
+			return backend.Point{}, fmt.Errorf("%w for w-frame coordinate", errNoWindow)
 		}
+		ox, oy = float64(win.X), float64(win.Y)
+		fw, fh = float64(win.W), float64(win.H)
 	case "pointer":
 		pos, err := st.be.MousePos(ctx)
 		if err != nil {
@@ -176,19 +190,66 @@ func (st *engineState) resolve(ctx context.Context, p ir.Point) (backend.Point, 
 	}
 	res := backend.Point{X: x, Y: y}
 
-	// Run-time bounds check (help.txt:262-268): r is always checked here
-	// ("checked on the resulting position"); desktop/display coordinates
-	// are checked here only when they carry a percent flag - the
-	// non-percent case was already rejected in Preflight before any line
-	// ran, so re-checking it here would be redundant (and st.window is
-	// always nil in Phase 1, so a window-frame point has nothing to check
-	// against yet - Phase 2).
-	if p.Frame != "window" && (p.Frame == "pointer" || p.XPct || p.YPct) {
+	// Run-time bounds check (help.txt:262-268). A w-frame coordinate is
+	// checked against the current window's own rectangle (ox,oy fw,fh were
+	// set from currentWindow above); r is always checked here ("checked on
+	// the resulting position"); desktop/display coordinates are checked
+	// here only when they carry a percent flag - the non-percent case was
+	// already rejected in Preflight before any line ran, so re-checking it
+	// here would be redundant.
+	if p.Frame == "window" {
+		if res.X < ox || res.X > ox+fw || res.Y < oy || res.Y > oy+fh {
+			return backend.Point{}, fmt.Errorf("%w: coordinates outside current window", errBounds)
+		}
+		return res, nil
+	}
+	if p.Frame == "pointer" || p.XPct || p.YPct {
 		if err := checkBounds(st.getInfo(ctx), p, res); err != nil {
 			return backend.Point{}, err
 		}
 	}
 	return res, nil
+}
+
+// pageHeight resolves one by=page scroll unit's height in logical units
+// (help.txt scroll Decision): the current window's height when a win is
+// focused, else the primary display's height, else a conservative
+// fallback. Resolving it here (not in a backend) keeps by=page identical
+// across the darwin and windows backends. Only called for by=page, so the
+// lazy getInfo fetch never happens for a plain by=line scroll.
+func (st *engineState) pageHeight(ctx context.Context) int {
+	if st.window != nil && st.window.H > 0 {
+		return st.window.H
+	}
+	info := st.getInfo(ctx)
+	for _, d := range info.DisplayList {
+		if d.Primary && d.H > 0 {
+			return d.H
+		}
+	}
+	return 900 // conservative fallback if no primary display is reported
+}
+
+// currentWindow returns the window w-frame coordinates resolve against: the
+// window a prior win focused (st.window), else the OS-focused window
+// (help.txt COORDINATES :254 "win; else the OS-focused window"), found by
+// listing every window (an empty title selector matches all) and picking
+// the Focused one. Returns nil when neither exists (a w-frame coordinate
+// then fails E_NOWINDOW, distinct from an in-window E_BOUNDS).
+func (st *engineState) currentWindow(ctx context.Context) *backend.Window {
+	if st.window != nil {
+		return st.window
+	}
+	wins, err := st.be.Windows(ctx, ir.Selector{Kind: "title", Value: ""})
+	if err != nil {
+		return nil
+	}
+	for i := range wins {
+		if wins[i].Focused {
+			return &wins[i]
+		}
+	}
+	return nil
 }
 
 // checkBounds validates a resolved point against the desktop (frame
