@@ -23,6 +23,12 @@ import (
 // carrying it to E_BOUNDS instead of the default E_CAPTURE.
 var ErrBounds = errors.New("coordinate outside bounds")
 
+// ErrNoWindow is the sentinel a backend wraps when a Capture that needs the
+// current window (cap[w]) has none focused - so the engine maps it to
+// E_NOWINDOW, consistent with a w-frame coordinate for c/m/drag (help.txt
+// COORDINATES :254), instead of the default E_CAPTURE.
+var ErrNoWindow = errors.New("no current window")
+
 // Button is a mouse button (help.txt:325).
 type Button string
 

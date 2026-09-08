@@ -141,9 +141,14 @@ func (st *engineState) doCapture(ctx context.Context, op *ir.Op, res output.Resu
 
 	timings, err := runFrameSeries(ctx, n, op.CapInterval, time.Now(), realClock{}, shoot)
 	if err != nil {
-		// A region that resolved outside its frame is E_BOUNDS (the backend
-		// wraps backend.ErrBounds); every other capture failure is
-		// E_CAPTURE (help.txt COORDINATES :262-264, ERROR CODES).
+		// cap[w] with no current window is E_NOWINDOW (like c[w]/m[w]/drag[w],
+		// help.txt COORDINATES :254); a region that resolved outside its
+		// frame is E_BOUNDS (the backend wraps backend.ErrBounds); every
+		// other capture failure is E_CAPTURE (help.txt COORDINATES :262-264,
+		// ERROR CODES).
+		if errors.Is(err, backend.ErrNoWindow) {
+			return fail(output.ENoWindow, err.Error())
+		}
 		if errors.Is(err, backend.ErrBounds) {
 			return fail(output.EBounds, err.Error())
 		}

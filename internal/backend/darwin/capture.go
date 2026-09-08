@@ -19,10 +19,20 @@ const (
 	kCGWindowListOptionIncludingWindow = 1 << 3
 	kCGNullWindowID                    = 0
 	kCGWindowImageDefault              = 0
+	// kCGWindowImageBoundsIgnoreFraming excludes the window's drop shadow
+	// and framing so the captured image is tight to the window's own bounds
+	// (CGWindow.h). Without it CGWindowListCreateImage returns an image
+	// LARGER than window.W/H with a top-left shifted up/left of
+	// window.X/window.Y, so the reported origin/size and the derived
+	// nativeScale (pw/region.w) no longer match the window's qwin geometry.
+	kCGWindowImageBoundsIgnoreFraming = 1 << 0
 )
 
 var (
-	errNoCaptureWindow = errors.New("no current window to capture (cap[w]; none focused)")
+	// errNoCaptureWindow wraps backend.ErrNoWindow so a cap[w] with no
+	// current window maps to E_NOWINDOW (like c[w]/m[w]/drag[w]), not
+	// E_CAPTURE (engine/capture.go doCapture).
+	errNoCaptureWindow = fmt.Errorf("%w: no current window to capture (cap[w]; none focused)", backend.ErrNoWindow)
 	errCaptureFailed   = errors.New("screenshot failed (Screen Recording permission or an off-screen frame)")
 )
 
@@ -108,7 +118,7 @@ func (b *Backend) Capture(ctx context.Context, req backend.CaptureReq) (backend.
 		} else {
 			screen = cgRectNull()
 		}
-		cgImg = cgWindowListCreateImage(screen, kCGWindowListOptionIncludingWindow, uint32(window.ID), kCGWindowImageDefault)
+		cgImg = cgWindowListCreateImage(screen, kCGWindowListOptionIncludingWindow, uint32(window.ID), kCGWindowImageBoundsIgnoreFraming)
 	case "display":
 		id := activeDisplayIDs()[req.Display]
 		if req.Rect != nil {
@@ -175,19 +185,7 @@ func imageFromCG(cgImg uintptr, region captureRegion, req backend.CaptureReq) (b
 	src := unsafe.Slice(ptr, length)
 
 	// Native (backing-pixel) RGBA, padding stripped, BGRA -> RGBA.
-	native := make([]byte, pw*ph*4)
-	for y := 0; y < ph; y++ {
-		srow := src[y*stride : y*stride+pw*4]
-		drow := native[y*pw*4 : (y+1)*pw*4]
-		for x := 0; x < pw; x++ {
-			s := srow[x*4 : x*4+4]
-			d := drow[x*4 : x*4+4]
-			d[0] = s[2] // R <- B
-			d[1] = s[1] // G
-			d[2] = s[0] // B <- R
-			d[3] = 0xff // opaque
-		}
-	}
+	native := bgraToRGBA(src, pw, ph, stride)
 
 	// nativeScale = backing pixels per logical point of the captured region.
 	nativeScale := 1.0
@@ -205,6 +203,32 @@ func imageFromCG(cgImg uintptr, region captureRegion, req backend.CaptureReq) (b
 		Scale:  effScale,
 		Pixels: pixels,
 	}, nil
+}
+
+// bgraToRGBA converts a CGImage screenshot's 32-bit BGRA pixel buffer
+// (kCGBitmapByteOrder32Little + premultiplied-first, with a row stride that
+// may exceed w*4 by padding) into a tightly-packed, forced-opaque RGBA
+// buffer with stride w*4 - the shape engine/capture.go's encodePNG expects.
+// It is pure (no FFI, no CGImage), so imageFromCG only has to feed it the
+// right bytes; the channel swap and the opaque-alpha write are unit-tested
+// off a synthetic buffer. Forcing alpha opaque without un-premultiplying is
+// v1-acceptable: screenshots are effectively opaque, and only a window
+// grab's rounded-corner edge pixels carry meaningful alpha.
+func bgraToRGBA(src []byte, w, h, stride int) []byte {
+	dst := make([]byte, w*h*4)
+	for y := 0; y < h; y++ {
+		srow := src[y*stride : y*stride+w*4]
+		drow := dst[y*w*4 : (y+1)*w*4]
+		for x := 0; x < w; x++ {
+			s := srow[x*4 : x*4+4]
+			d := drow[x*4 : x*4+4]
+			d[0] = s[2] // R <- B
+			d[1] = s[1] // G
+			d[2] = s[0] // B <- R
+			d[3] = 0xff // opaque
+		}
+	}
+	return dst
 }
 
 // scaledDims computes the output pixel dimensions and the effective scale
