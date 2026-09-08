@@ -147,9 +147,11 @@ type targetInfo struct {
 	OS string `json:"os"`
 }
 
-// writeStart writes the OUTPUT "First line" (plain, help.txt:562) or the
-// JSONL "start" event (help.txt:596-597).
-func writeStart(w io.Writer, jsonl bool, dest, outDir string) error {
+// WriteStart writes the OUTPUT "First line" (plain, help.txt:562) or the
+// JSONL "start" event (help.txt:596-597). Exported so cmd/gotto-hando's
+// local-run path (the first non-abort caller) can print it; WriteAbort
+// still calls it internally for the abort case.
+func WriteStart(w io.Writer, jsonl bool, dest, outDir string) error {
 	if !jsonl {
 		_, err := fmt.Fprintf(w, "out %s\n", outDir)
 		return err
@@ -171,7 +173,7 @@ func WriteAbort(w io.Writer, jsonl bool, dest string, outDir string, code ErrorC
 		_, err := fmt.Fprintf(w, "abort: %s (%s)\n", msg, code)
 		return err
 	}
-	if err := writeStart(w, true, dest, outDir); err != nil {
+	if err := WriteStart(w, true, dest, outDir); err != nil {
 		return err
 	}
 	return writeJSONObject(w, []KV{

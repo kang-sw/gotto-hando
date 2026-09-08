@@ -253,3 +253,178 @@ func TestExecNonZeroSoftenedByNoerr(t *testing.T) {
 		t.Fatalf("exit = %d, want 0", sum.Exit)
 	}
 }
+
+// TestPreflightAbortCarriesCode: run.go's Preflight wiring (260907-feat-
+// darwin-backend Phase 1) unwraps a *backend.PreflightError from
+// Backend.Preflight into Summary.Aborted/AbortCode/AbortMsg with
+// Exit==output.AbortExit(code) (here E_SESSION -> exit 4, help.txt EXIT
+// CODES). No line runs: Results/Done stay empty.
+func TestPreflightAbortCarriesCode(t *testing.T) {
+	seq := parse(t, "k[]a")
+	be := &dryrun.Backend{FailOn: func(call string) error {
+		if call == "Preflight" {
+			return &backend.PreflightError{Code: output.ESession, Msg: "no unlocked GUI session (session=locked)"}
+		}
+		return nil
+	}}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+
+	if !sum.Aborted {
+		t.Fatal("Aborted = false, want true")
+	}
+	if sum.AbortCode != output.ESession {
+		t.Fatalf("AbortCode = %s, want %s", sum.AbortCode, output.ESession)
+	}
+	if sum.AbortMsg != "no unlocked GUI session (session=locked)" {
+		t.Fatalf("AbortMsg = %q", sum.AbortMsg)
+	}
+	if sum.Exit != output.ExitPreflight {
+		t.Fatalf("Exit = %d, want %d", sum.Exit, output.ExitPreflight)
+	}
+	if len(sum.Results) != 0 {
+		t.Fatalf("Results = %v, want empty (aborted run touches no line)", sum.Results)
+	}
+	// The line after Preflight never reached the backend either.
+	for _, c := range be.Calls {
+		if c != "Preflight" {
+			t.Fatalf("unexpected call %q after an aborted Preflight; calls=%v", c, be.Calls)
+		}
+	}
+}
+
+// TestPreflightAbortUncodedErrorIsUnknown: a Preflight error that is not a
+// *backend.PreflightError still aborts (never runs a line), but with
+// E_UNKNOWN since there is no code to unwrap - and E_UNKNOWN still maps to
+// exit 4 (AbortExit's default case), not a distinct exit.
+func TestPreflightAbortUncodedErrorIsUnknown(t *testing.T) {
+	seq := parse(t, "k[]a")
+	be := &dryrun.Backend{FailOn: func(call string) error {
+		if call == "Preflight" {
+			return errors.New("dlopen CoreGraphics: boom")
+		}
+		return nil
+	}}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+
+	if !sum.Aborted {
+		t.Fatal("Aborted = false, want true")
+	}
+	if sum.AbortCode != output.EUnknown {
+		t.Fatalf("AbortCode = %s, want %s", sum.AbortCode, output.EUnknown)
+	}
+	if sum.Exit != output.ExitPreflight {
+		t.Fatalf("Exit = %d, want %d", sum.Exit, output.ExitPreflight)
+	}
+}
+
+// TestResolveBoundsFailureIsLineErrorNotAbort: an out-of-bounds r-frame
+// point fails only the ONE line with E_BOUNDS at run time (help.txt:262-
+// 268: r/w/% coordinates are checked "right before their line runs", not
+// during Preflight) - the run itself is not aborted, and exit is the
+// normal run-time-failure code (1), not the abort code (4).
+func TestResolveBoundsFailureIsLineErrorNotAbort(t *testing.T) {
+	seq := parse(t, "m[r]0,-40")
+	be := &dryrun.Backend{
+		MousePosResult: backend.Point{X: 0, Y: 0},
+		InfoResult:     backend.Info{DesktopX: 0, DesktopY: 0, DesktopW: 100, DesktopH: 100},
+	}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+
+	if sum.Aborted {
+		t.Fatal("Aborted = true, want false (a bounds failure is a line error, not an abort)")
+	}
+	if len(sum.Results) != 1 || sum.Results[0].Status != "err" {
+		t.Fatalf("Results = %+v, want a single err result", sum.Results)
+	}
+	if sum.Results[0].ErrCode != output.EBounds {
+		t.Fatalf("ErrCode = %s, want %s", sum.Results[0].ErrCode, output.EBounds)
+	}
+	if sum.Exit != output.ExitRuntimeFailure {
+		t.Fatalf("Exit = %d, want %d", sum.Exit, output.ExitRuntimeFailure)
+	}
+	// MouseMove must never have been called: resolve() failed first.
+	for _, c := range be.Calls {
+		if c == "MouseMove" || (len(c) >= 9 && c[:9] == "MouseMove") {
+			t.Fatalf("MouseMove should not have been called after a bounds failure; calls=%v", be.Calls)
+		}
+	}
+}
+
+// synthMultiDisplayInfo is a two-display backend.Info fixture: display 0 is
+// the primary at origin (0,0), display 1 sits to its right at (1440,0), both
+// 1440x900 - the desktop union is 2880x900. Used to prove disp=N is
+// translated relative to the NAMED display's own origin, not the desktop's
+// (help.txt COORDINATES :250-253: m[disp=1]0,0 is display 1's top-left).
+func synthMultiDisplayInfo() backend.Info {
+	return backend.Info{
+		DesktopX: 0, DesktopY: 0, DesktopW: 2880, DesktopH: 900,
+		DisplayList: []backend.DisplayGeom{
+			{X: 0, Y: 0, W: 1440, H: 900, Primary: true},
+			{X: 1440, Y: 0, W: 1440, H: 900},
+		},
+	}
+}
+
+// TestResolveDisplayFrameTranslatesOrigin: m[disp=1]0,0 must resolve to the
+// display's absolute origin (1440,0), not the untranslated (0,0) that
+// compose.go's resolve() produced before the "display" case was added
+// (Critical review finding: disp=N ignored the display's origin).
+func TestResolveDisplayFrameTranslatesOrigin(t *testing.T) {
+	seq := parse(t, "m[disp=1]0,0")
+	be := &dryrun.Backend{InfoResult: synthMultiDisplayInfo()}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+
+	if len(sum.Results) != 1 || sum.Results[0].Status != "ok" {
+		t.Fatalf("Results = %+v, want a single ok result", sum.Results)
+	}
+	want := "MouseMove 1440,0"
+	found := false
+	for _, c := range be.Calls {
+		if c == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("calls = %v, want a %q call", be.Calls, want)
+	}
+}
+
+// TestResolveDisplayFramePercentUsesDisplaySize: m[disp=1]50%,50% must land
+// at display 1's center (1440+720, 450) = (2160,450), not the desktop's
+// center - resolve() must use the named display's W/H for percent frame
+// sizes, not the desktop's.
+func TestResolveDisplayFramePercentUsesDisplaySize(t *testing.T) {
+	seq := parse(t, "m[disp=1]50%,50%")
+	be := &dryrun.Backend{InfoResult: synthMultiDisplayInfo()}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+
+	if len(sum.Results) != 1 || sum.Results[0].Status != "ok" {
+		t.Fatalf("Results = %+v, want a single ok result", sum.Results)
+	}
+	want := "MouseMove 2160,450"
+	found := false
+	for _, c := range be.Calls {
+		if c == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("calls = %v, want a %q call", be.Calls, want)
+	}
+}
+
+// TestResolveDisplayFrameOutOfRangeIsBounds: an out-of-range disp= index
+// (percent-flagged, so it reaches resolve()'s runtime path rather than
+// Preflight) fails the line with E_BOUNDS, not a panic or E_INPUT.
+func TestResolveDisplayFrameOutOfRangeIsBounds(t *testing.T) {
+	seq := parse(t, "m[disp=5]50%,50%")
+	be := &dryrun.Backend{InfoResult: synthMultiDisplayInfo()}
+	sum := engine.Run(context.Background(), be, seq, engine.RunOptions{})
+
+	if len(sum.Results) != 1 || sum.Results[0].Status != "err" {
+		t.Fatalf("Results = %+v, want a single err result", sum.Results)
+	}
+	if sum.Results[0].ErrCode != output.EBounds {
+		t.Fatalf("ErrCode = %s, want %s", sum.Results[0].ErrCode, output.EBounds)
+	}
+}

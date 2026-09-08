@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"time"
 
 	"github.com/kang-sw/gotto-hando/assets"
+	"github.com/kang-sw/gotto-hando/internal/engine"
 	"github.com/kang-sw/gotto-hando/internal/output"
 )
 
@@ -27,15 +29,19 @@ import (
 //     diagnostics on stderr, exit 2; --check success prints "ok <n>
 //     lines" and --ir success prints the IR JSON, both exit 0. Never
 //     connects (bypasses dest resolution).
-//  8. dest == "local" -> "platform backend not implemented"; any other
-//     dest (including none) -> "remote destinations not implemented".
-//     Both abort E_VALIDATE, exit 2.
+//  8. dest == "local" -> collect lines, parse/inline/validate them (same
+//     contract as --check/--ir's failure path), build the platform backend
+//     (darwin; every other GOOS still aborts E_VALIDATE, dispatch_other.go)
+//     and run engine.Run against it, printing Preflight aborts or the
+//     normal start/result/done stream. Any other dest (including none) ->
+//     "remote destinations not implemented", abort E_VALIDATE, exit 2
+//     (260908-feat-remote-ssh is a separate ticket).
 //
-// Phase 2 adds the parser/IR/validator behind --check/--ir only; the
-// engine and backends exist but are not CLI-wired (no real backend), so
-// every dest path still exits 2. Options that remain inert (-q,
-// --timeout, -k, --cap-on-error, --out) are accepted and stored but
-// otherwise unused; --delay seeds the IR defaults for --ir.
+// Phase 3 (260907-feat-darwin-backend Phase 1) wires the darwin backend
+// behind dest=="local"; --timeout deadline enforcement stays inert
+// (context.Background() is passed to engine.Run) and -q/--out/-k/
+// --cap-on-error are read from opts but otherwise as documented; --delay
+// seeds the IR defaults.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	for _, a := range args {
 		switch a {
@@ -108,9 +114,36 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	if opts.Dest == "local" {
-		// Covers the bare-TTY-to-qinfo shortcut and --ping too: neither
-		// has a backend yet.
-		return abort(output.EValidate, "platform backend not implemented, nothing ran")
+		lines, err := collectLines(opts.File, opts.HasFile, opts.Lines, stdin)
+		if err != nil {
+			fmt.Fprintf(stderr, "usage error: %v\n", err)
+			return output.ExitValidation
+		}
+		seq, diags := parseAndValidate(opts, lines)
+		if len(diags) > 0 {
+			writeDiagnostics(stderr, diags)
+			return output.ExitValidation
+		}
+
+		be, err := newLocalBackend()
+		if err != nil {
+			return abort(output.EValidate, err.Error())
+		}
+
+		outDir := output.DefaultOutDir(opts.Out, opts.Dest, newRunID())
+		sum := engine.Run(context.Background(), be, seq, engine.RunOptions{
+			KeepGoing: opts.KeepGoing, CapOnError: opts.CapOnError,
+		})
+		if sum.Aborted {
+			return abort(sum.AbortCode, sum.AbortMsg)
+		}
+
+		_ = output.WriteStart(stdout, opts.JSONL, opts.Dest, outDir)
+		for _, r := range sum.Results {
+			_ = output.WriteResult(stdout, opts.JSONL, opts.Quiet, r)
+		}
+		_ = output.WriteDone(stdout, opts.JSONL, sum.Done)
+		return sum.Exit
 	}
 	return abort(output.EValidate, "remote destinations not implemented")
 }
