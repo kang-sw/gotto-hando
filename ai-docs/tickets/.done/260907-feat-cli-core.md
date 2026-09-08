@@ -5,6 +5,7 @@ sage-review-design: completed
 sage-review-completeness: completed
 sage-review-design-reviewed: ef5ce9b02e6b847b
 sage-review-completeness-reviewed: ef5ce9b02e6b847b
+completed: 2026-09-08
 ---
 
 # CLI core: module layout, embedded help, output, parser -> IR, drift tests
@@ -266,3 +267,49 @@ as a normative edit in the same commit as the test, without changing
 meaning; the test is never weakened.
 Verification: `go test ./...` green; deliberately breaking one help line in a
 scratch copy makes the corresponding test fail.
+
+### Result (95296b7) - 2026-09-08
+
+Landed the help/spec drift tests. Test (b) COMMANDS + (c) KEY NAMES in
+`internal/syntax/help_drift_test.go`, (d) ERROR/EXIT CODES in
+`internal/output/help_drift_test.go`, (e) LIMITS in
+`internal/ir/limits_drift_test.go`, (a) spec-anchor coverage in
+`assets/spec_drift_test.go`, (f) format lint (80 cols, header regex, trailing
+newline) in `assets/lint_test.go`; (g) OPTIONS stays in
+`cmd/gotto-hando/options_drift_test.go` (Phase 1, untouched). Each extractor
+`t.Fatal`s on zero rows so it cannot pass vacuously.
+
+Three meaning-preserving normative `assets/help.txt` edits landed in the same
+commit as the tests (95296b7): MODIFIERS/MODIFIER KEYS "Accepted by" punctuation
+parity, a blank line separating the KEY NAMES token list from its prose, and
+splitting the multi-constant LIMITS rows (`k keys`, `drag`, `cap n=`) plus a
+`<= 48 chars:` prefix on `label=` so each numeric bound is a single extractable
+token. Documented exclusions the tests encode (not drift): `d=` is universal and
+absent from every bracket and Accepted-by list, so it is dropped from the code
+side of (b); `#` is handled by the line-shape dispatcher not `cmdSpec`, excluded
+from the command-name comparison; and the three target-dependent LIMITS rows
+(exec stdout/stderr, `--timeout`, `argv`) are excluded from (e). The two literal
+frame-group tokens `r|w|disp=` / `w|disp=N` are special-cased in the bracket
+extractor rather than regularized in the help text.
+
+Closeout (commit 34c06a6): the four pointer spec files
+`ai-docs/spec/{help,help-macos,help-windows,help-remote}.md` were created per
+Spec Impact - one `{#260908-...}` anchor per `== SECTION ==`, each pointing at
+its paired help text. Test (a)'s reverse direction (every help section has a
+spec anchor) now enforces for real instead of `t.Skip`; all four subtests pass
+and `spec_index.verify` reports ok.
+
+Review: fit clean, test clean, correctness clean + 1 Minor (the test (a)
+`specSeeRE` matched any help filename, so a mis-authored spec could compare
+against the wrong section set) - closed at closeout by authoring each spec to
+reference only its paired help text. Verification: `go build`/`go vet`/`go test
+./...` green; the drift extractors were mutation-verified non-vacuous (breaking
+`cap n=`, `mute`, a `scroll` Accepted-by entry, and `E_EXEC` each fails the
+corresponding test); `TestHelpFlagsByteIdentical` still passes after the
+help.txt edits.
+
+Ticket complete: all three phases landed (cc2b42d, d01114f, 95296b7 + closeout
+34c06a6). The darwin/windows/remote backend tickets carry the two forward gaps
+recorded in the Phase 2 Result (per-display geometry in `backend.Info`;
+unbounded `n=` / oversized comment-line checks) and wire the engine into the
+`local` run path (still exit 2 today).
