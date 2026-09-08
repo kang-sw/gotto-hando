@@ -65,6 +65,33 @@ func sessionState() string {
 	}
 }
 
+// isRemoteSessionID backs IsRemoteSession's (remote.go) session-id/WinSta0
+// half: true when this process's session id is not the active console
+// session, or the input desktop is not accessible - the same two probes
+// sessionState uses before its "Default"/"Winlogon" branch, which
+// IsRemoteSession deliberately does not reuse (that branch only
+// distinguishes an unlocked from a locked CONSOLE session, not remote vs.
+// local).
+func isRemoteSessionID() bool {
+	pid := windows.GetCurrentProcessId()
+	var sid uint32
+	if err := windows.ProcessIdToSessionId(pid, &sid); err != nil {
+		return true
+	}
+	active := windows.WTSGetActiveConsoleSessionId()
+	const noActiveConsoleSession = 0xFFFFFFFF
+	if active == noActiveConsoleSession || sid != active {
+		return true
+	}
+
+	desk, err := openInputDesktop()
+	if err != nil {
+		return true
+	}
+	defer procCloseDesktop.Call(desk)
+	return false
+}
+
 // openInputDesktop opens the desktop currently receiving user input with
 // just enough access (DESKTOP_READOBJECTS) to read its name - this must
 // succeed even while the secure/Winlogon desktop is active, which a normal
