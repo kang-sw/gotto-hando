@@ -125,13 +125,21 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 		// held keys/buttons are released the same as any other fail-fast
 		// stop.
 		if ctx.Err() != nil {
-			sum.Results = append(sum.Results, output.Result{Line: op.Line, Status: "skip", Cmd: kindCmd[op.Kind]})
+			r := output.Result{Line: op.Line, Status: "skip", Cmd: kindCmd[op.Kind]}
+			sum.Results = append(sum.Results, r)
 			sum.Skip++
+			if opt.OnResult != nil {
+				opt.OnResult(r)
+			}
 			continue
 		}
 		if failed && !opt.KeepGoing {
-			sum.Results = append(sum.Results, output.Result{Line: op.Line, Status: "skip", Cmd: kindCmd[op.Kind]})
+			r := output.Result{Line: op.Line, Status: "skip", Cmd: kindCmd[op.Kind]}
+			sum.Results = append(sum.Results, r)
 			sum.Skip++
+			if opt.OnResult != nil {
+				opt.OnResult(r)
+			}
 			continue
 		}
 		opStart := time.Now()
@@ -152,6 +160,9 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 			if opt.CapOnError {
 				cr := st.captureOnError(ctx, op.Line)
 				sum.Results = append(sum.Results, cr)
+				if opt.OnResult != nil {
+					opt.OnResult(cr)
+				}
 				if cr.Status == "err" {
 					sum.Err++
 				} else {

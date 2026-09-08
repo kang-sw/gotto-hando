@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"strings"
 	"sync"
@@ -362,4 +363,67 @@ func TestHandleWriteFailureStopsRunAndReleasesHeldKey(t *testing.T) {
 			t.Fatalf("calls = %v, line 3 (k[]b) should not have run after the disconnect", be.Calls)
 		}
 	}
+}
+
+// (e) the RunEnvelope's KeepGoing field (-k) actually reaches engine.Run
+// through the wire: decodeRequest (wire.go) maps env.KeepGoing into
+// engine.RunOptions, and a JSON-tag typo there would silently break -k
+// over ssh while every other test still passes (they all use the zero
+// RunEnvelope). Builds the request through the real EncodeRequest path (not
+// a hand-built struct) so the assertion covers the whole wire, not just
+// decodeRequest in isolation. k[]a fails (FailOn), k[]b is a plain tap
+// that only runs if the failure did not stop the line: default (fail-fast)
+// skips it, KeepGoing:true runs it.
+func TestHandleKeepGoingReachesEngineOverWire(t *testing.T) {
+	failOnA := func(call string) error {
+		if call == "KeyDown a" {
+			return errors.New("injected failure")
+		}
+		return nil
+	}
+
+	run := func(t *testing.T, env bridge.RunEnvelope) []event {
+		t.Helper()
+		seq := parseSeq(t, "k[]a", "k[]b")
+		be := &dryrun.Backend{FailOn: failOnA}
+		sess := &bridge.Session{Backend: be}
+
+		client, server := net.Pipe()
+		done := make(chan struct{})
+		go func() {
+			sess.Handle(context.Background(), server)
+			close(done)
+		}()
+		go writeRequest(t, client, seq, env)
+
+		events := readEvents(t, client)
+		<-done
+		return events
+	}
+
+	t.Run("default fail-fast skips line 2", func(t *testing.T) {
+		events := run(t, bridge.RunEnvelope{})
+		if len(events) != 4 {
+			t.Fatalf("events = %+v, want 4 (start, err, skip, done)", events)
+		}
+		if events[1].Status != "err" || events[1].Line != 1 {
+			t.Errorf("events[1] = %+v, want err/line=1", events[1])
+		}
+		if events[2].Status != "skip" || events[2].Line != 2 {
+			t.Errorf("events[2] = %+v, want skip/line=2 (no -k)", events[2])
+		}
+	})
+
+	t.Run("keep_going:true runs line 2", func(t *testing.T) {
+		events := run(t, bridge.RunEnvelope{KeepGoing: true})
+		if len(events) != 4 {
+			t.Fatalf("events = %+v, want 4 (start, err, ok, done)", events)
+		}
+		if events[1].Status != "err" || events[1].Line != 1 {
+			t.Errorf("events[1] = %+v, want err/line=1", events[1])
+		}
+		if events[2].Status != "ok" || events[2].Line != 2 {
+			t.Errorf("events[2] = %+v, want ok/line=2 (keep_going reached the wire)", events[2])
+		}
+	})
 }
