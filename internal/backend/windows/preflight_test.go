@@ -92,7 +92,7 @@ func TestPreflightQueryOnlyPassesWhenLocked(t *testing.T) {
 // (b) session locked + a `k` line -> E_SESSION (check 1 fires before check
 // 3, even though a key is also held here).
 func TestPreflightLockedSessionWithKeyOp(t *testing.T) {
-	b := newTestBackend(t, "locked", false)
+	b := newTestBackend(t, "locked", true)
 	seq := seqOf(ir.Op{Kind: ir.KindKey, Keys: [][]string{{"a"}}})
 	code := preflightCode(t, b.Preflight(context.Background(), seq))
 	if code != output.ESession {
