@@ -142,7 +142,14 @@ func buttonFlag(bt backend.Button, down bool) uint32 {
 // ticks*WHEEL_DELTA notches as by=line (Windows cannot natively
 // distinguish them at the injection layer) - documented as a CAVEATS
 // bullet in assets/help-windows.txt.
-func (b *Backend) Scroll(ctx context.Context, dir backend.Dir, ticks int, by backend.ScrollUnit) error {
+// pageHeightPixels is the engine-resolved height of one by=page unit (the
+// current window's or primary display's height). Windows scrolls in
+// wheel-notch (WHEEL_DELTA) units, not pixels, so by=page cannot honour a
+// pixel height and the parameter is unused here (help-windows.txt documents
+// the wheel-notch limitation); it is accepted only to satisfy the shared
+// backend.Backend signature that the engine's GOOS-agnostic page-height
+// resolution threads through.
+func (b *Backend) Scroll(ctx context.Context, dir backend.Dir, ticks int, by backend.ScrollUnit, pageHeightPixels int) error {
 	amount := scrollAmount(ticks, by)
 	switch dir {
 	case "up":

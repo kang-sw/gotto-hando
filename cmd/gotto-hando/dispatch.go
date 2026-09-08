@@ -93,11 +93,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if opts.HasRemoteBin {
 		return abort(output.EValidate, "--remote-bin not implemented")
 	}
-	if opts.InlineCaptures {
-		return abort(output.EValidate, "--inline-captures not implemented")
-	}
 	if opts.RequestPerms {
-		return abort(output.EValidate, "--request-perms not implemented")
+		return requestPerms(opts, stdout, stderr, abort)
 	}
 
 	if opts.HasFile && len(opts.Lines) > 0 {
@@ -133,6 +130,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		outDir := output.DefaultOutDir(opts.Out, opts.Dest, newRunID())
 		sum := engine.Run(context.Background(), be, seq, engine.RunOptions{
 			KeepGoing: opts.KeepGoing, CapOnError: opts.CapOnError,
+			OutDir: outDir, InlineCaptures: opts.InlineCaptures,
 		})
 		if sum.Aborted {
 			return abort(sum.AbortCode, sum.AbortMsg)

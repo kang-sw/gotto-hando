@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/kang-sw/gotto-hando/internal/backend"
 	"github.com/kang-sw/gotto-hando/internal/output"
@@ -63,6 +64,65 @@ func queryDispJSON(info backend.Info) []output.KV {
 		})
 	}
 	return []output.KV{{Key: "displays", Val: arr}}
+}
+
+// windowFlags builds a qwin/win flags field (help.txt OUTPUT :578-579:
+// "* focused, min minimized, hidden"). The three are independent; focused
+// is "*", minimized "min", hidden "hidden", joined by spaces, empty when
+// none apply (the plain example's Terminal row has an empty flags field).
+func windowFlags(w backend.Window) string {
+	var f []string
+	if w.Focused {
+		f = append(f, "*")
+	}
+	if w.Minimized {
+		f = append(f, "min")
+	}
+	if w.Hidden {
+		f = append(f, "hidden")
+	}
+	return strings.Join(f, " ")
+}
+
+// formatQueryWindows builds qwin's plain Extra lines (help.txt OUTPUT
+// :576-578): one two-space-indented, TAB-separated line per window -
+// "<id>\t<pid>\t<app>\t<x>,<y> <w>x<h>\t<flags>\t<title>". An empty list
+// yields no lines (qwin tolerates zero matches, help.txt :296-297).
+func formatQueryWindows(wins []backend.Window) []string {
+	lines := make([]string, 0, len(wins))
+	for _, w := range wins {
+		lines = append(lines, fmt.Sprintf("  %d\t%d\t%s\t%d,%d %dx%d\t%s\t%s",
+			w.ID, w.PID, w.App, w.X, w.Y, w.W, w.H, windowFlags(w), w.Title))
+	}
+	return lines
+}
+
+// queryWindowsJSON is qwin's --jsonl command-specific field: a "windows"
+// array (spec-consistent inference, same caveat as queryInfoJSON; help.txt
+// JSONL shows no verbatim qwin example).
+func queryWindowsJSON(wins []backend.Window) []output.KV {
+	arr := make([]map[string]any, 0, len(wins))
+	for _, w := range wins {
+		arr = append(arr, map[string]any{
+			"id": w.ID, "pid": w.PID, "app": w.App, "title": w.Title,
+			"x": w.X, "y": w.Y, "w": w.W, "h": w.H,
+			"focused": w.Focused, "minimized": w.Minimized, "hidden": w.Hidden,
+		})
+	}
+	return []output.KV{{Key: "windows", Val: arr}}
+}
+
+// focusJSON is win's --jsonl command-specific fields (spec-consistent
+// inference; help.txt JSONL shows no verbatim win example): the focused
+// window's identity/geometry plus matched=N.
+func focusJSON(w backend.Window, matched int) []output.KV {
+	return []output.KV{
+		{Key: "id", Val: w.ID}, {Key: "pid", Val: w.PID},
+		{Key: "app", Val: w.App}, {Key: "title", Val: w.Title},
+		{Key: "matched", Val: matched},
+		{Key: "x", Val: w.X}, {Key: "y", Val: w.Y},
+		{Key: "w", Val: w.W}, {Key: "h", Val: w.H},
+	}
 }
 
 // formatQueryMouse builds qmouse's plain Extra line (help.txt:445-446,

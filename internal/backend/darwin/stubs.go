@@ -7,34 +7,20 @@ import (
 	"errors"
 
 	"github.com/kang-sw/gotto-hando/internal/backend"
-	"github.com/kang-sw/gotto-hando/internal/ir"
 )
 
-// errPhase1 marks the Backend methods for commands outside the Phase 1
-// goal list (win/qwin/cap are Phase 2; exec/open real behavior is Phase 3
-// - ticket Out of Scope). They exist only so *Backend satisfies
-// backend.Backend; none is reachable through Phase 1's Preflight-gated
-// command set, so a line using one simply fails at run time as err, which
-// is acceptable (Out of Scope: "their Backend methods exist only as
-// compile-satisfying stubs in Phase 1").
-var errPhase1 = errors.New("not implemented in Phase 1")
-
-func (b *Backend) Windows(ctx context.Context, sel ir.Selector) ([]backend.Window, error) {
-	return nil, errPhase1
-}
-
-func (b *Backend) Focus(ctx context.Context, w backend.Window) error {
-	return errPhase1
-}
-
-func (b *Backend) Capture(ctx context.Context, req backend.CaptureReq) (backend.Image, error) {
-	return backend.Image{}, errPhase1
-}
+// errNotThisPhase marks the Backend methods for commands outside this
+// phase's goal list: exec/open real behavior is Phase 3 (ticket Out of
+// Scope). They exist only so *Backend satisfies backend.Backend; neither is
+// reachable through the Preflight-gated command set this phase wires, so a
+// line using one fails at run time as err, which is acceptable. (win/qwin/
+// cap are now implemented in windows.go / capture.go and no longer stubbed.)
+var errNotThisPhase = errors.New("not implemented in this phase")
 
 func (b *Backend) Exec(ctx context.Context, req backend.ExecReq) (backend.ExecResult, error) {
-	return backend.ExecResult{}, errPhase1
+	return backend.ExecResult{}, errNotThisPhase
 }
 
 func (b *Backend) Open(ctx context.Context, target string) error {
-	return errPhase1
+	return errNotThisPhase
 }

@@ -23,6 +23,15 @@ import (
 type RunOptions struct {
 	KeepGoing  bool // -k
 	CapOnError bool // --cap-on-error
+
+	// OutDir is the resolved capture directory (help.txt OUTPUT "Capture
+	// paths"); the engine writes cap PNGs under it. cmd/gotto-hando
+	// computes it via output.DefaultOutDir before calling Run.
+	OutDir string
+	// InlineCaptures is --inline-captures: cap encodes to base64 in the
+	// --jsonl object ("data"/"fmt") instead of writing a file
+	// (help.txt --inline-captures :72-77).
+	InlineCaptures bool
 }
 
 // Summary is the finished run: the per-line results, the auto-release warns,
@@ -51,6 +60,13 @@ type engineState struct {
 	txtMS   int
 	keyMS   int
 	info    *backend.Info
+
+	// outDir/inlineCaptures/capSeq back cap file writing: the capture
+	// directory, whether to inline base64 instead of writing, and the
+	// per-run NNNN counter (help.txt OUTPUT "Capture paths").
+	outDir         string
+	inlineCaptures bool
+	capSeq         int
 }
 
 var kindCmd = map[ir.Kind]string{
@@ -81,10 +97,12 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 	}
 
 	st := &engineState{
-		be:      be,
-		delayMS: seq.Defaults.DelayMS,
-		txtMS:   seq.Defaults.TextIntervalMS,
-		keyMS:   seq.Defaults.KeyGapMS,
+		be:             be,
+		delayMS:        seq.Defaults.DelayMS,
+		txtMS:          seq.Defaults.TextIntervalMS,
+		keyMS:          seq.Defaults.KeyGapMS,
+		outDir:         opt.OutDir,
+		inlineCaptures: opt.InlineCaptures,
 	}
 	var sum Summary
 	failed := false
@@ -105,6 +123,19 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 		case "err":
 			sum.Err++
 			failed = true
+			// --cap-on-error: after a failed line, take one extra capture
+			// (help.txt --cap-on-error :58-59, EXECUTION :513). Its own
+			// result is counted like any other line so the done totals match
+			// the printed lines.
+			if opt.CapOnError {
+				cr := st.captureOnError(ctx, op.Line)
+				sum.Results = append(sum.Results, cr)
+				if cr.Status == "err" {
+					sum.Err++
+				} else {
+					sum.OK++
+				}
+			}
 		case "skip":
 			sum.Skip++
 		default: // ok / warn
@@ -213,7 +244,11 @@ func (st *engineState) execute(ctx context.Context, op *ir.Op) output.Result {
 			return fail(boundsAwareCode(err), err.Error())
 		}
 	case ir.KindScroll:
-		if err := st.be.Scroll(ctx, backend.Dir(op.ScrollDir), op.Ticks, backend.ScrollUnit(op.ScrollBy)); err != nil {
+		pageH := 0
+		if op.ScrollBy == "page" {
+			pageH = st.pageHeight(ctx)
+		}
+		if err := st.be.Scroll(ctx, backend.Dir(op.ScrollDir), op.Ticks, backend.ScrollUnit(op.ScrollBy), pageH); err != nil {
 			return fail(output.EInput, err.Error())
 		}
 	case ir.KindClipboard:
@@ -238,10 +273,13 @@ func (st *engineState) execute(ctx context.Context, op *ir.Op) output.Result {
 	case ir.KindFocus:
 		return st.doFocus(ctx, op, res, fail)
 	case ir.KindQueryWindows:
-		if _, err := st.be.Windows(ctx, op.Selector); err != nil {
+		wins, err := st.be.Windows(ctx, op.Selector)
+		if err != nil {
 			return fail(output.EUnknown, err.Error())
 		}
 		res.AlwaysShow = true
+		res.Extra = formatQueryWindows(wins)
+		res.JSON = queryWindowsJSON(wins)
 	case ir.KindOpen:
 		if err := st.be.Open(ctx, op.Target); err != nil {
 			return fail(output.EExec, err.Error())
@@ -249,12 +287,7 @@ func (st *engineState) execute(ctx context.Context, op *ir.Op) output.Result {
 	case ir.KindExec:
 		return st.doExec(ctx, op, res, fail)
 	case ir.KindCapture:
-		req := backend.CaptureReq{Frame: op.Frame, Display: op.Disp, Rect: op.Rect,
-			Scale: op.Scale, ScaleNative: op.ScaleNative, Format: op.Format}
-		if _, err := st.be.Capture(ctx, req); err != nil {
-			return fail(output.ECapture, err.Error())
-		}
-		res.AlwaysShow = true
+		return st.doCapture(ctx, op, res, fail)
 	case ir.KindSleep:
 		sleepCtx(ctx, time.Duration(op.SleepMS)*time.Millisecond)
 	case ir.KindSet:
@@ -296,13 +329,24 @@ func (st *engineState) execute(ctx context.Context, op *ir.Op) output.Result {
 }
 
 func (st *engineState) doFocus(ctx context.Context, op *ir.Op, res output.Result, fail func(output.ErrorCode, string) output.Result) output.Result {
-	wins, err := st.be.Windows(ctx, op.Selector)
+	// win[wait=DUR] polls the window list every 100ms until a match appears
+	// or DUR elapses (help.txt WINDOW SELECTORS :295-296); without wait= it
+	// is a single lookup. The same poll loop backs open[wait=] in Phase 3.
+	waitMS := 0
+	if op.HasWait {
+		waitMS = op.WaitMS
+	}
+	wins, err := pollForWindow(ctx, waitMS, realClock{}, func() ([]backend.Window, error) {
+		return st.be.Windows(ctx, op.Selector)
+	})
 	if err != nil {
 		return fail(output.ENoWindow, err.Error())
 	}
 	if len(wins) == 0 {
 		return fail(output.ENoWindow, "no matching window")
 	}
+	// The frontmost (z-order) match wins; the backend returns matches in
+	// z-order (help.txt WINDOW SELECTORS :294).
 	w := wins[0]
 	if err := st.be.Focus(ctx, w); err != nil {
 		return fail(output.ENoWindow, err.Error())
@@ -311,7 +355,11 @@ func (st *engineState) doFocus(ctx context.Context, op *ir.Op, res output.Result
 	if len(wins) > 1 {
 		res.Status = "warn"
 	}
-	res.Detail = fmt.Sprintf("id=%d app=%s matched=%d", w.ID, w.App, len(wins))
+	// OUTPUT win line (help.txt :600): id/app/matched, then the window's
+	// origin, size and quoted title.
+	res.Detail = fmt.Sprintf("id=%d app=%s matched=%d %d,%d %dx%d %q",
+		w.ID, w.App, len(wins), w.X, w.Y, w.W, w.H, w.Title)
+	res.JSON = focusJSON(w, len(wins))
 	return res
 }
 

@@ -197,3 +197,47 @@ func TestPreflightDisplayFrameCoordOutOfRangeAborts(t *testing.T) {
 		t.Errorf("code = %s, want %s", code, output.EBounds)
 	}
 }
+
+// newTestBackendWithScreen builds a Backend with an active session,
+// Accessibility granted, no held keys, a controllable Screen Recording
+// grant and a synthetic display list - the seam the cap-only Screen
+// Recording gate (check 3b) needs, with zero FFI/GUI dependency.
+func newTestBackendWithScreen(t *testing.T, screen bool) *Backend {
+	t.Helper()
+	if err := initFFI(); err != nil {
+		t.Fatalf("initFFI: %v", err)
+	}
+	return &Backend{
+		session:  fakeSession{state: "active"},
+		perm:     fakePerm{accessibility: true, screen: screen},
+		keys:     fakeKeys{},
+		displays: fakeDisplays{list: synthOffsetDisplays},
+	}
+}
+
+// check 3b: a cap-only sequence with Screen Recording missing -> E_PERMISSION
+// (the cap-only 6th gate; help-macos.txt CHECK :21-24). Accessibility is
+// granted here, so this proves the screen gate fires independently of the
+// Accessibility gate.
+func TestPreflightCapMissingScreenRecording(t *testing.T) {
+	b := newTestBackendWithScreen(t, false)
+	seq := seqOf(ir.Op{Kind: ir.KindCapture, Frame: "desktop"})
+	code := preflightCode(t, b.Preflight(context.Background(), seq))
+	if code != output.EPermission {
+		t.Errorf("code = %s, want %s", code, output.EPermission)
+	}
+}
+
+// check 3b is cap-ONLY: a qwin/win sequence with Screen Recording missing
+// must still PASS Preflight (help-macos.txt CHECK :21-24: without Screen
+// Recording qwin/win run, only titles come back empty; cap alone needs it).
+func TestPreflightWindowOpsPassWithoutScreenRecording(t *testing.T) {
+	b := newTestBackendWithScreen(t, false)
+	seq := seqOf(
+		ir.Op{Kind: ir.KindQueryWindows},
+		ir.Op{Kind: ir.KindFocus, Selector: ir.Selector{Kind: "app", Value: "Safari"}},
+	)
+	if err := b.Preflight(context.Background(), seq); err != nil {
+		t.Fatalf("Preflight() = %v, want nil (screen gate is cap-only; qwin/win run without Screen Recording)", err)
+	}
+}
