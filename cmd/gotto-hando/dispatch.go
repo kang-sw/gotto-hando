@@ -125,6 +125,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return output.ExitValidation
 		}
 
+		// Windows-only routing (260908-feat-remote-ssh Phase 0): an
+		// ssh-started (or otherwise non-console) session forwards
+		// non-exempt runs to `gotto-hando --bridge` instead of touching
+		// the real local backend at all - shouldForwardToBridge is false
+		// on every other GOOS, so this branch is a no-op there
+		// (help-remote.txt SESSION BRIDGE "Detection").
+		if shouldForwardToBridge(seq) {
+			return forwardToBridge(opts, seq, stdout, stderr, abort)
+		}
+
 		be, err := newLocalBackend()
 		if err != nil {
 			return abort(output.EValidate, err.Error())

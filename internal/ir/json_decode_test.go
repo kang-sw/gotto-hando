@@ -16,7 +16,7 @@ func allKindsSeq() *ir.Sequence {
 	keyms := 40
 	rect := ir.Rect{X: 10, Y: 20, W: 300, H: 400, XPct: true, YPct: true}
 	return &ir.Sequence{
-		V: 1,
+		V:        1,
 		Defaults: ir.Defaults{DelayMS: 100, TextIntervalMS: 0, KeyGapMS: 30},
 		Ops: []ir.Op{
 			{Line: 1, Src: "win[]Blender", Kind: ir.KindFocus,
