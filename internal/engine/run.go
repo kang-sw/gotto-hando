@@ -378,8 +378,7 @@ func (st *engineState) doFocus(ctx context.Context, op *ir.Op, res output.Result
 	}
 	// OUTPUT win line (help.txt :600): id/app/matched, then the window's
 	// origin, size and quoted title.
-	res.Detail = fmt.Sprintf("id=%d app=%s matched=%d %d,%d %dx%d %q",
-		w.ID, w.App, len(wins), w.X, w.Y, w.W, w.H, w.Title)
+	res.Detail = formatFocusDetail(w, len(wins))
 	res.JSON = focusJSON(w, len(wins))
 	return res
 }
