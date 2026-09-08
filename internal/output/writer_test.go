@@ -169,6 +169,34 @@ func TestWriteAbortJSONL(t *testing.T) {
 	}
 }
 
+// TestWriteAbortEventPlainOmitsStart asserts WriteAbortEvent writes only
+// the abort line, no "start"/"out" line - the seam the bridge's local
+// forwarder (260908-feat-remote-ssh Phase 0) uses after printing its own
+// start object.
+func TestWriteAbortEventPlainOmitsStart(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteAbortEvent(&buf, false, ESession, "no bridge reachable"); err != nil {
+		t.Fatal(err)
+	}
+	want := "abort: no bridge reachable (E_SESSION)\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestWriteAbortEventJSONLOmitsStart is the jsonl counterpart: only the
+// abort object, no "start" object.
+func TestWriteAbortEventJSONLOmitsStart(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteAbortEvent(&buf, true, EConnect, "IR schema version mismatch"); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"event":"abort","code":"E_CONNECT","msg":"IR schema version mismatch"}` + "\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 // TestAbortExit asserts the ticket's abort-exit mapping: E_VALIDATE -> 2,
 // E_CONNECT -> 3, every other code -> 4.
 func TestAbortExit(t *testing.T) {
