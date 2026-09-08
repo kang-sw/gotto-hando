@@ -173,10 +173,14 @@ func Run(ctx context.Context, be backend.Backend, seq *ir.Sequence, opt RunOptio
 	n, rels := st.held.releaseAll(ctx, be)
 	sum.HeldReleased = n
 	for _, ar := range rels {
-		sum.Results = append(sum.Results, output.Result{
+		r := output.Result{
 			Line: ar.line, Status: "warn", Cmd: ar.cmd, Src: ar.src,
 			Detail: fmt.Sprintf("auto-released %s", ar.what),
-		})
+		}
+		sum.Results = append(sum.Results, r)
+		if opt.OnResult != nil {
+			opt.OnResult(r)
+		}
 	}
 
 	sum.Done = output.Done{OK: sum.OK, Err: sum.Err, Skip: sum.Skip, HeldReleased: n,

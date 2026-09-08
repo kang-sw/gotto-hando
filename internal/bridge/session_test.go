@@ -267,6 +267,48 @@ func TestHandleSerializesConcurrentRuns(t *testing.T) {
 	}
 }
 
+// (c2) a run that ends with a still-held key (kd[]shift, no matching ku)
+// streams the end-of-run auto-release "warn" result over the wire, not just
+// into Summary.Results - closing the gap the OnResult call added to
+// run.go's post-loop releaseAll block (internal/engine/run.go) is meant to
+// fix. TestHandleWriteFailureStopsRunAndReleasesHeldKey only checked the
+// backend's KeyUp call, never the wire, so it could not have caught the
+// warn line being dropped from the bridge's JSONL stream.
+//
+// Note: output.Result.Detail ("auto-released shift") is plain-mode-only
+// (internal/output/writer.go: writeResultJSON never emits an r.Detail
+// field, for any command, local or bridged) - so the wire-visible signal
+// for this line is status=warn + cmd=kd, not free text. That is true of
+// every JSONL run, not a bridge-specific gap, so it is out of scope here.
+func TestHandleStreamsAutoReleaseWarn(t *testing.T) {
+	seq := parseSeq(t, "kd[]shift")
+	be := &dryrun.Backend{}
+	sess := &bridge.Session{Backend: be}
+
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		sess.Handle(context.Background(), server)
+		close(done)
+	}()
+	go writeRequest(t, client, seq, bridge.RunEnvelope{})
+
+	events := readEvents(t, client)
+	<-done
+
+	// Expect: start, ok (kd[]shift itself), warn (auto-release), done.
+	if len(events) != 4 {
+		t.Fatalf("events = %+v, want 4 (start, ok, warn, done)", events)
+	}
+	warn := events[2]
+	if warn.Status != "warn" || warn.Cmd != "kd" {
+		t.Fatalf("events[2] = %+v, want status=warn cmd=kd (the auto-released kd[]shift line)", warn)
+	}
+	if events[3].Event != "done" {
+		t.Fatalf("events[3].Event = %q, want done (warn must precede done)", events[3].Event)
+	}
+}
+
 // (d) a conn whose Write errors mid-run (simulating a disconnected caller)
 // causes the run to stop early and a still-held key to appear released in
 // dryrun.Backend.Calls. kd[]shift holds a key that only end-of-run
