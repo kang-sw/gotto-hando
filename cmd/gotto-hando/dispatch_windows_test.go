@@ -104,7 +104,8 @@ func TestForwardToBridgePlainRelaysQueryResult(t *testing.T) {
 // WriteDone - the exact functions the local run path already uses) are
 // forwarded byte-for-byte.
 func TestForwardToBridgeJSONLRelaysVerbatim(t *testing.T) {
-	withBridgeSession(t, &dryrun.Backend{Clipboard: "hello-jsonl"})
+	be := &dryrun.Backend{Clipboard: "hello-jsonl"}
+	withBridgeSession(t, be)
 
 	opts := parsedOptions{Dest: "local", JSONL: true}
 	seq, diags := parseAndValidate(opts, []string{"qclip", "qclip"})
@@ -131,6 +132,9 @@ func TestForwardToBridgeJSONLRelaysVerbatim(t *testing.T) {
 	}
 	if events[1]["status"] != "ok" || events[2]["status"] != "ok" || events[3]["ok"] != float64(2) {
 		t.Errorf("events = %#v, want two ok results and done ok=2", events)
+	}
+	if got := strings.Count(strings.Join(be.Calls, "\n"), "ClipboardGet"); got != 2 {
+		t.Errorf("ClipboardGet calls = %d, want 2 (calls=%v)", got, be.Calls)
 	}
 }
 
@@ -166,6 +170,38 @@ func TestForwardToBridgePostStartDisconnectWritesUnknownDoneOnce(t *testing.T) {
 	}
 	if events[1]["status"] != "ok" || events[2]["status"] != "ok" || events[3]["ok"] != float64(2) || events[3]["state"] != "unknown" {
 		t.Errorf("events = %#v, want two ok results and unknown done ok=2", events)
+	}
+}
+
+func TestForwardToBridgePostStartDisconnectDoesNotCountAutoReleaseWarn(t *testing.T) {
+	be := &dryrun.Backend{}
+	withBridgeDisconnectBeforeDone(t, be)
+
+	opts := parsedOptions{Dest: "local", JSONL: true}
+	seq, diags := parseAndValidate(opts, []string{"kd[]shift"})
+	if len(diags) > 0 {
+		t.Fatalf("parseAndValidate diags: %+v", diags)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := forwardToBridge(opts, seq, &stdout, &stderr, testAbort(&stderr))
+	if code != output.ExitStateUnknown {
+		t.Fatalf("exit = %d, want %d (stderr=%q)", code, output.ExitStateUnknown, stderr.String())
+	}
+
+	var events []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("decode output line %q: %v", line, err)
+		}
+		events = append(events, event)
+	}
+	if len(events) != 4 || events[1]["status"] != "ok" || events[2]["status"] != "warn" {
+		t.Fatalf("events = %#v, want start, kd ok, auto-release warn, done", events)
+	}
+	if events[3]["ok"] != float64(1) || events[3]["state"] != "unknown" {
+		t.Errorf("events = %#v, want unknown done ok=1", events)
 	}
 }
 

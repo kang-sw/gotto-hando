@@ -228,14 +228,10 @@ func forwardToBridge(opts parsedOptions, seq *ir.Sequence, stdout, stderr io.Wri
 		if err := relayResult(opts, stdout, line); err != nil {
 			return stateUnknownDone()
 		}
-		switch resultStatus(line) {
-		case "err":
-			errN++
-		case "skip":
-			skip++
-		case "ok", "warn":
-			ok++
-		}
+		resultOK, resultErr, resultSkip := resultCounts(line)
+		ok += resultOK
+		errN += resultErr
+		skip += resultSkip
 		if !scanner.Scan() {
 			return stateUnknownDone()
 		}

@@ -173,6 +173,38 @@ func TestForwardToBridgePostStartDisconnectWritesUnknownDoneOnce(t *testing.T) {
 	}
 }
 
+func TestForwardToBridgePostStartDisconnectDoesNotCountAutoReleaseWarn(t *testing.T) {
+	be := &dryrun.Backend{}
+	withBridgeDisconnectBeforeDone(t, be)
+
+	opts := parsedOptions{Dest: "local", JSONL: true}
+	seq, diags := parseAndValidate(opts, []string{"kd[]shift"})
+	if len(diags) > 0 {
+		t.Fatalf("parseAndValidate diags: %+v", diags)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := forwardToBridge(opts, seq, &stdout, &stderr, testAbort(&stderr))
+	if code != output.ExitStateUnknown {
+		t.Fatalf("exit = %d, want %d (stderr=%q)", code, output.ExitStateUnknown, stderr.String())
+	}
+
+	var events []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("decode output line %q: %v", line, err)
+		}
+		events = append(events, event)
+	}
+	if len(events) != 4 || events[1]["status"] != "ok" || events[2]["status"] != "warn" {
+		t.Fatalf("events = %#v, want start, kd ok, auto-release warn, done", events)
+	}
+	if events[3]["ok"] != float64(1) || events[3]["state"] != "unknown" {
+		t.Errorf("events = %#v, want unknown done ok=1", events)
+	}
+}
+
 // TestForwardToBridgeDialFailureAborts covers the "no bridge reachable"
 // path (help-macos.txt SESSION BRIDGE FOR SSH (REMOTE MAC)): forwardToBridge
 // must abort E_SESSION / exit 4 without ever printing a start line, exactly

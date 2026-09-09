@@ -73,9 +73,22 @@ func TestPipeConnCloseFlushesTerminalFrameBeforeDisconnect(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Close did not finish after client consumed terminal frame")
 	}
+
+	nextAccepted := acceptBridgePipe(t, l)
+	nextClient, err := DialBridge(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nextClient.Close()
+	select {
+	case nextServer := <-nextAccepted:
+		_ = nextServer.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("listener did not accept a client after clean flush")
+	}
 }
 
-func TestPipeConnCloseAfterDisconnectedClientAllowsNextAccept(t *testing.T) {
+func TestPipeConnCloseAfterDisconnectedFlushAllowsNextAccept(t *testing.T) {
 	name := uniqueBridgePipeName(t)
 	l, err := listenBridgeAt(name)
 	if err != nil {
@@ -89,11 +102,26 @@ func TestPipeConnCloseAfterDisconnectedClientAllowsNextAccept(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := <-accepted
+	if _, err := server.Write([]byte("terminal-done\n")); err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- server.Close() }()
+
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned before client disconnected: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
 	_ = client.Close()
-	// FlushFileBuffers may either observe the disconnected peer or complete
-	// successfully when no output remained buffered. In both cases Close must
-	// disconnect the instance so the listener can accept again.
-	_ = server.Close()
+	select {
+	case err := <-closed:
+		if err == nil {
+			t.Fatal("Close succeeded after the client disconnected during flush, want flush error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not return after the client disconnected during flush")
+	}
 
 	nextAccepted := acceptBridgePipe(t, l)
 	nextClient, err := DialBridge(name)
@@ -103,9 +131,8 @@ func TestPipeConnCloseAfterDisconnectedClientAllowsNextAccept(t *testing.T) {
 	defer nextClient.Close()
 	select {
 	case nextServer := <-nextAccepted:
-		_ = nextClient.Close()
 		_ = nextServer.Close()
 	case <-time.After(2 * time.Second):
-		t.Fatal("listener did not accept a client after failed flush")
+		t.Fatal("listener did not accept a client after disconnected flush")
 	}
 }
