@@ -320,6 +320,95 @@ E_CONNECT yields exit 3; a test that killing the fake ssh mid-run yields
 mid-run, releases held keys through the dry-run backend (same tagged test
 binary) and exits.
 
+### Result (bd85972) - 2026-09-09
+
+Range `66bfa2c..bd85972` on `impl/main/boxer-both-twig` (survey plan e8bca2d;
+4 impl commits to 52f2964; 3 review-fix commits to bd85972). ssh `<dest>`
+transport as scoped; verified entirely on this macOS host via a fake-ssh +
+`dryrun`-tagged-binary harness (no real remote / Device Guard dependency) -
+the ticket's own Phase 1 verification boundary.
+
+Behavioral delta:
+- `gotto-hando <dest> ...` (any dest != `local`) now spawns
+  `ssh <dest> <remote-bin> local --jsonl --inline-captures --expect-version <ver> <fwd opts> -f -`,
+  feeds the locally `[f]`-rewritten sequence on stdin, and relays the remote
+  JSONL back in the caller's format. Forwarded options per help.txt OPTIONS
+  (always `--jsonl --inline-captures --expect-version`; conditional
+  `-q/--delay/--timeout/-k/--cap-on-error/--request-perms`; never
+  `--out`/`--remote-bin`). `--check`/`--ir` never start ssh.
+- `[f]` resolved on the initiating machine: txt/paste/clip `[f]` inlined into
+  the sequence text via a new escape encoder (exact inverse of
+  `syntax.applyEscapes`: `\`->`\\`, LF->`\n`, TAB->`\t`, else literal);
+  `qclip[f]<path>`->`qclip[]` with the returned text written to the local path;
+  the rewritten line re-validated against `ir.MaxLineBytes` (64 KiB) with the
+  diagnostic keyed on the original `op.Src`, so an oversize inlined line exits 2
+  before ssh spawns.
+- Captures cross as `"fmt":"png"`; base64 frames decoded locally and written to
+  `<out>/<NNNN>-<label>-<UTC ts>.png` (reusing exported `engine.CapturePath`/
+  `WriteCaptureFile`, one counter increment per cap result line). err `src`
+  restored from the local parse by line number; the relayed `start` carries the
+  local `out`/`dest` but the remote's real `target.os`.
+- Exit mapping: pre-`start` process/ssh death -> E_CONNECT exit 3 with stderr
+  relayed verbatim (ssh failure, missing remote binary, older-binary usage
+  error, `--expect-version` mismatch); `abort` after `start` -> E_VALIDATE 2 /
+  E_CONNECT 3 / else 4; connection lost after `start` with no `done`/`abort` ->
+  synthesized `done` state=unknown exit 5. ssh killed at `--timeout`+5 s.
+- `--request-perms` forwarded to a `<dest>`: `start` + `perms` wire shape; a
+  windows remote answers `abort` E_VALIDATE (local exit 2).
+
+Structural:
+- New GOOS-agnostic `internal/remote` (pure rewrite/decode/relay logic) +
+  `cmd/gotto-hando/remote.go` (ssh-spawn glue: `os/exec` + system `ssh`, same on
+  every initiating GOOS). `dispatch.go`'s local path restructured to print
+  `start` before preflight and stream via `engine.RunOptions.OnResult` under
+  `--jsonl` (byte-identical for direct `local`: plain mode keeps its buffered
+  no-early-`out` shape); the local `--jsonl` path now cancels the engine on an
+  OnResult write failure so held keys release via end-of-run `releaseAll`.
+- A 4th `dispatch_dryrun.go` (`//go:build dryrun`) selects the dry-run backend
+  for the fake-ssh harness (the other three dispatch files gained `&& !dryrun`);
+  the dry-run backend stays unreachable in a release build.
+- No new dependency (x/sys + purego only). `internal/output.WriteStartOS` added
+  (WriteStart delegates to it) to relay the remote's os; three engine capture
+  helpers exported (rename-only).
+
+Review (partitioned correctness/fit/test; review #1: 4 Critical + 2 Important,
+all fixed; the C1 fix introduced one Critical regression NEW-1, fixed across
+review #2 -> relay #2 -> review #3 clean; ceiling not reached):
+- C1 (Critical): post-`start` connection loss mis-mapped to exit 3; fixed to
+  exit 5 state=unknown mirroring `runRemoteRequestPerms`.
+- T3 (Critical, impl+test): the local `--jsonl` path did not cancel the engine
+  on stdout write failure, so held keys would not release through the dry-run
+  backend; wired the bridge's cancel-on-write-failure mechanism + added the
+  dryrun-tag held-key-release test.
+- T1/T2 (Critical, test): added the EXAMPLES byte-identical + capture-PNG
+  end-to-end test and the wrong-`--expect-version` relay test (both
+  ticket-named verification bullets that had no coverage).
+- I1 (Important): relayed `start` reported local GOOS not the remote's
+  `target.os` (byte-identity break for macOS->Windows); fixed via WriteStartOS.
+- I-test (Important): added an integration `paste[f]`-fail-src case.
+- NEW-1 (Critical, self-inflicted by the C1 fix): the reused stateUnknown
+  closure double-printed `start` on mid-run connection loss; split into
+  start+done (pre-result) vs done-only (mid-run) with jsonl exact-count
+  regression tests (verified to catch the bug).
+
+Mental model: `ai-docs/mental-model/remote-transport.md` (07274e7) records the
+single-`start` invariant across the four connection-loss terminal sites and the
+cancel-on-write-failure -> end-of-run `releaseAll` held-key-release mechanism.
+
+Verification: `go build ./...` native/windows/darwin (`CGO_ENABLED=0`) clean;
+plain + `-tags dryrun` builds clean; `go test ./... -race` and
+`-tags dryrun ./cmd/gotto-hando -race` all pass; `GOOS=windows go test -c`
+compiles; `gofmt -l .` empty; `git diff e8bca2d -- go.mod go.sum` empty;
+`go vet ./...` no new warnings.
+
+Unresolved / deferred:
+- No real over-ssh run: the whole transport is verified only by the fake-ssh +
+  dryrun harness on this macOS host (matches this phase's verification
+  boundary). Real remote acceptance rides Phase 2.
+- Pre-existing gaps left untouched (Out of Scope): direct-`local`
+  `qclip[f]<path>` file-write in `engine/query.go` is still unimplemented; the
+  parsed `--ping` option is still unconsulted anywhere in `cmd/gotto-hando`.
+
 ### Phase 2: Session bridge (macOS and Windows)
 
 Depends on Phase 1; the Windows half also depends on
