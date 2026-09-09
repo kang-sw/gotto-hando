@@ -13,6 +13,22 @@ test.
 
 ## Domain Rules
 
+- **Every JSONL-to-plain relay must delegate command-specific output to
+  `engine.ResultDetailFromJSON`; do not reformat a newly structured result in
+  a relay.** Both `internal/remote.Relay.Process` (ssh) and
+  `cmd/gotto-hando/bridge_relay.go`'s `relayResult` receive JSONL as the
+  complete result wire format, but plain output needs the engine's derived
+  `Detail`, `Extra`, and `AlwaysShow` fields. The shared helper is therefore
+  the compatibility boundary: adding result metadata means adding its
+  JSON-to-plain reconstruction there, then letting both relays call it.
+  `rclip` made the failure mode concrete: relaying only the common fields
+  silently changed `1 ok rclip type=image bytes=... 640x480` into a bare
+  `1 ok rclip` for bridge or ssh runs while direct local execution remained
+  correct. JSONL itself can stay byte-for-byte whenever no local rewrite is
+  required; only plain mode reconstructs. This is covered by the rclip cases
+  in `internal/engine/wire_result_test.go` and
+  `internal/remote/relay_test.go`.
+
 - **The wrapper prints its own `start` object exactly once — never make a
   connection-loss closure reusable across sites on both sides of that
   print.** `runRemote` has four terminal "connection lost" sites: the
