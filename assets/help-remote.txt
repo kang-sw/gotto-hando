@@ -37,7 +37,8 @@ wrapper, the session bridge, remote setup, quoting, troubleshooting.
      rewrite the sequence text before sending: txt[f]/paste[f]/clip[f]
      become txt[]/paste[]/clip[] with the file's contents inlined in TEXT
      ESCAPES form (\n \t \\ \uXXXX); qclip[f]<path> becomes qclip[] and its
-     result is written to the local <path> afterwards. The rewritten line
+     result is written to the local <path> afterwards. rclip[] paths remain
+     literal and are read on the target. The rewritten line
      is validated again against the 64 KiB line limit like any other line
      (E_VALIDATE, exit 2, nothing sent). The remote side receives plain
      sequence text and reads no file of yours.
@@ -91,8 +92,8 @@ wrapper, the session bridge, remote setup, quoting, troubleshooting.
   Files other than text: [f] carries UTF-8 text of at most 64 KiB and
   nothing else; there is no upload command. Move images, binaries or large
   files with scp/sftp to the SAME destination (`scp ./shot.png
-  <dest>:/tmp/`), then consume them there with open[]<remote path> or
-  exec[] (e.g. a script that puts the file on that machine's clipboard).
+  <dest>:/tmp/`), then consume an image there with rclip[]<remote path>
+  (then k[p]v), or use open[]/exec[] for other files.
   Files coming back are cap and qclip[f] (inline, written locally); for
   anything else use scp the other way.
 

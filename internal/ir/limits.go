@@ -23,4 +23,6 @@ const (
 	MinScale         = 0.1
 	MaxScale         = 4.0
 	MaxLabelLen      = 48 // [A-Za-z0-9][A-Za-z0-9_-]{0,47}
+	MaxRClipBytes    = 64 * 1024 * 1024
+	MaxRClipPixels   = 64 * 1024 * 1024
 )

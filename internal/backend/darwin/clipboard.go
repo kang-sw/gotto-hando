@@ -6,10 +6,12 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"unsafe"
 
 	"github.com/ebitengine/purego"
 	"github.com/ebitengine/purego/cstrings"
 	"github.com/ebitengine/purego/objc"
+	"github.com/kang-sw/gotto-hando/internal/backend"
 )
 
 // pasteboardTypeString is NSPasteboardTypeString's fixed UTI value
@@ -17,14 +19,21 @@ import (
 // from AppKit's exported NSString constant symbol (simpler and equally
 // stable - it is a documented, unchanging UTI).
 const pasteboardTypeString = "public.utf8-plain-text"
+const (
+	pasteboardTypePNG  = "public.png"
+	pasteboardTypeTIFF = "public.tiff"
+)
 
 var (
-	nsPasteboardClass    objc.Class
-	selGeneralPasteboard objc.SEL
-	selClearContents     objc.SEL
-	selSetStringForType  objc.SEL
-	selStringForType     objc.SEL
-	clipboardOnce        sync.Once
+	nsPasteboardClass      objc.Class
+	nsDataClass            objc.Class
+	selGeneralPasteboard   objc.SEL
+	selClearContents       objc.SEL
+	selSetStringForType    objc.SEL
+	selStringForType       objc.SEL
+	selSetDataForType      objc.SEL
+	selDataWithBytesLength objc.SEL
+	clipboardOnce          sync.Once
 )
 
 // initClipboard loads AppKit (for NSPasteboard - ffi.go's dlopenAll does
@@ -37,11 +46,39 @@ func initClipboard() {
 			panic(err)
 		}
 		nsPasteboardClass = objc.GetClass("NSPasteboard")
+		nsDataClass = objc.GetClass("NSData")
 		selGeneralPasteboard = objc.RegisterName("generalPasteboard")
 		selClearContents = objc.RegisterName("clearContents")
 		selSetStringForType = objc.RegisterName("setString:forType:")
 		selStringForType = objc.RegisterName("stringForType:")
+		selSetDataForType = objc.RegisterName("setData:forType:")
+		selDataWithBytesLength = objc.RegisterName("dataWithBytes:length:")
 	})
+}
+
+// ClipboardSetImage publishes both normalized representations. NSData's
+// factory copies bytes, so its autoreleased objects remain valid through the
+// synchronous pasteboard calls and no Go memory crosses the call boundary.
+func (b *Backend) ClipboardSetImage(ctx context.Context, image backend.ClipboardImage) error {
+	initClipboard()
+	pb := objc.ID(nsPasteboardClass).Send(selGeneralPasteboard)
+	pb.Send(selClearContents)
+	for _, item := range []struct {
+		data []byte
+		typ  string
+	}{{image.PNG, pasteboardTypePNG}, {image.TIFF, pasteboardTypeTIFF}} {
+		if len(item.data) == 0 {
+			return errors.New("empty normalized clipboard image representation")
+		}
+		typ := cfString(item.typ)
+		data := objc.ID(nsDataClass).Send(selDataWithBytesLength, unsafe.Pointer(&item.data[0]), uintptr(len(item.data)))
+		ok := objc.Send[bool](pb, selSetDataForType, data, objc.ID(typ))
+		cfRelease(typ)
+		if !ok {
+			return errors.New("NSPasteboard setData:forType: returned false")
+		}
+	}
+	return nil
 }
 
 // errClipboardSetFailed is ClipboardSet's failure sentinel

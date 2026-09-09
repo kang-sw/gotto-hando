@@ -45,6 +45,7 @@ func allKindsSeq() *ir.Sequence {
 			{Line: 13, Src: "clip[]hello", Kind: ir.KindClipboard, Text: "hello"},
 			{Line: 14, Src: "paste[]hello", Kind: ir.KindPaste, Text: "hello", IntervalMS: 20},
 			{Line: 15, Src: "qclip[f]", Kind: ir.KindQueryClip, FromFile: true},
+			{Line: 16, Src: "rclip[img]/tmp/shot.bmp", Kind: ir.KindRClip, Path: "/tmp/shot.bmp", RClipType: "image"},
 			{Line: 16, Src: "open[wait=1s]Blender", Kind: ir.KindOpen, Target: "Blender", WaitMS: 1000, HasWait: true},
 			{Line: 17, Src: "exec[]git status", Kind: ir.KindExec,
 				Argv: []string{"git", "status"}, Shell: false, Noerr: false, TimeoutMS: 10000},

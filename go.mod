@@ -5,3 +5,5 @@ go 1.25.0
 require github.com/ebitengine/purego v0.11.0
 
 require golang.org/x/sys v0.47.0
+
+require golang.org/x/image v0.45.0 // indirect

@@ -91,7 +91,8 @@ var kindCmd = map[ir.Kind]string{
 	ir.KindMove: "m", ir.KindClick: "c", ir.KindButtonDown: "md",
 	ir.KindButtonUp: "mu", ir.KindDrag: "drag", ir.KindScroll: "scroll",
 	ir.KindClipboard: "clip", ir.KindPaste: "paste", ir.KindQueryClip: "qclip",
-	ir.KindOpen: "open", ir.KindExec: "exec", ir.KindCapture: "cap",
+	ir.KindRClip: "rclip",
+	ir.KindOpen:  "open", ir.KindExec: "exec", ir.KindCapture: "cap",
 	ir.KindSleep: "sleep", ir.KindSet: "set", ir.KindQueryInfo: "qinfo",
 	ir.KindQueryDisp: "qdisp", ir.KindQueryMouse: "qmouse",
 }
@@ -316,6 +317,25 @@ func (st *engineState) execute(ctx context.Context, op *ir.Op) output.Result {
 		res.AlwaysShow = true
 		res.Detail = s
 		res.JSON = []output.KV{{Key: "text", Val: s}}
+	case ir.KindRClip:
+		loaded, err := loadRClip(op.Path, op.RClipType)
+		if err != nil {
+			return fail(output.EClipboard, err.Error())
+		}
+		if loaded.Type == "text" {
+			err = st.be.ClipboardSet(ctx, loaded.Text)
+		} else {
+			err = st.be.ClipboardSetImage(ctx, loaded.Image)
+		}
+		if err != nil {
+			return fail(output.EClipboard, err.Error())
+		}
+		res.Detail = fmt.Sprintf("type=%s bytes=%d", loaded.Type, loaded.Bytes)
+		res.JSON = []output.KV{{Key: "type", Val: loaded.Type}, {Key: "bytes", Val: loaded.Bytes}}
+		if loaded.Type == "image" {
+			res.Detail += fmt.Sprintf(" %dx%d", loaded.Image.Width, loaded.Image.Height)
+			res.JSON = append(res.JSON, output.KV{Key: "width", Val: loaded.Image.Width}, output.KV{Key: "height", Val: loaded.Image.Height})
+		}
 	case ir.KindFocus:
 		return st.doFocus(ctx, op, res, fail)
 	case ir.KindQueryWindows:

@@ -143,6 +143,14 @@ type ExecReq struct {
 	Timeout time.Duration
 }
 
+// ClipboardImage is a normalized image clipboard payload. PNG and TIFF are
+// the portable macOS representations; RGBA is tightly packed row-major.
+type ClipboardImage struct {
+	PNG, TIFF     []byte
+	RGBA          []byte
+	Width, Height int
+}
+
 // Backend is one target machine's input/query surface. Every method takes a
 // context for the run deadline (help.txt:528-532). The engine calls these
 // primitives; click/drag/key-chords/repeat/interpolation/held-tracking/delay
@@ -173,6 +181,7 @@ type Backend interface {
 
 	ClipboardGet(ctx context.Context) (string, error)
 	ClipboardSet(ctx context.Context, s string) error
+	ClipboardSetImage(ctx context.Context, image ClipboardImage) error
 
 	MousePos(ctx context.Context) (Point, error)
 

@@ -37,6 +37,7 @@ var positiveLines = []string{
 	"m[]700,500", "scroll[by=page]down 2",
 	"kd[]shift", "c[]100,100", "c[]300,100", "ku[]shift",
 	"k[c]a", "k[c]c", "qclip[f]./selection.txt",
+	"rclip[]/tmp/shot.png", "rclip[img]/tmp/shot.bmp", "rclip[txt]notes.txt",
 	"open[wait=10s]blender", "exec[]blender --version", `exec[shell]dir /b C:\work`,
 	`exec[timeout=60s]blender -b C:\work\scene.blend -f 1`, `exec[shell]dir /b C:\work\render`,
 	"exec[noerr,shell]grep -q ERROR ~/app.log",
@@ -105,6 +106,8 @@ func TestNegativeClasses(t *testing.T) {
 		{"over-long chord", "k[csamp]a+b+c+d", output.EValidate},
 		{"scroll ticks range", "scroll[]down 99", output.EValidate},
 		{"exec timeout range", "exec[timeout=61s]x", output.EValidate},
+		{"rclip missing path", "rclip[]", output.ESyntax},
+		{"rclip incompatible modifiers", "rclip[img,txt]x", output.ESyntax},
 		// Malformed coordinate (coord.go parseCoord / parsePoint).
 		{"bad coord non-numeric", "m[]abc,def", output.ESyntax},
 		{"bad coord single value", "m[]1", output.ESyntax},

@@ -33,6 +33,7 @@ const (
 	KindClipboard    Kind = "clipboard"       // clip
 	KindPaste        Kind = "paste"           // paste
 	KindQueryClip    Kind = "query_clipboard" // qclip
+	KindRClip        Kind = "read_clipboard"  // rclip
 	KindOpen         Kind = "open"            // open
 	KindExec         Kind = "exec"            // exec
 	KindCapture      Kind = "capture"         // cap
@@ -144,6 +145,11 @@ type Op struct {
 	// the output path the local writer saves the clipboard to. Not
 	// serialized.
 	FilePath string
+
+	// rclip: Path is resolved by the executing target (and therefore is on
+	// the wire). RClipType selects auto, image, or text loading.
+	Path      string
+	RClipType string
 
 	// move / click / button_down / drag
 	Point      Point

@@ -11,6 +11,7 @@ const (
 	plKeys                           // k kd ku: space-separated key names / chords
 	plText                           // txt clip paste: verbatim text (or [f] path)
 	plQclip                          // qclip: optional local path (or [f])
+	plRclip                          // rclip: required target path
 	plPoint                          // m: required x,y
 	plOptPoint                       // c md: optional x,y
 	plPoints                         // drag: polyline
@@ -82,6 +83,7 @@ func buildCommands() map[string]cmdSpec {
 		{"clip", ir.KindClipboard, plText, flags('f'), nil, kvkeys(), false},
 		{"paste", ir.KindPaste, plText, flags('f'), nil, kvkeys("ms"), false},
 		{"qclip", ir.KindQueryClip, plQclip, flags('f'), nil, kvkeys(), false},
+		{"rclip", ir.KindRClip, plRclip, nil, words("img", "txt"), kvkeys(), false},
 		{"win", ir.KindFocus, plSelector, flags('r'), nil, kvkeys("wait"), false},
 		{"qwin", ir.KindQueryWindows, plOptSelector, flags('r'), nil, kvkeys(), false},
 		{"open", ir.KindOpen, plTarget, nil, nil, kvkeys("wait"), false},

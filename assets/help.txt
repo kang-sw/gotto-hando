@@ -351,6 +351,14 @@ grep for it.
   qclip [f]                                       [file]
       Print the target clipboard text on one line with \n escaped, or with
       [f] save it verbatim to a LOCAL file.
+  rclip [img, txt]                                path
+      Read path on the executing target and set its clipboard. auto (the
+      default) treats .png, .jpg, .jpeg, .gif, .bmp, .tif and .tiff
+      case-insensitively as images, otherwise UTF-8 text; img and txt
+      override auto. Images are normalized to PNG/TIFF (macOS) or PNG/DIB
+      (Windows). Result: type=text|image bytes=N [WxH]. Read, UTF-8,
+      decode, and clipboard errors are E_CLIPBOARD. Follow with k[p]v to
+      paste; rclip itself never sends keys.
 
   WINDOWS / APPS / PROCESSES
   win [r regex, wait=0]                           selector
@@ -677,16 +685,17 @@ grep for it.
       "line_delay_ms" (a d= per-line delay override, any op); "display" on
       a point or capture (a disp=N display frame); "settle_ms" (paste);
       "to_file" (qclip[f]); "dir"/"ticks"/"by" (scroll); and
-      "points"/"steps" (drag). A field the example omits is unused by that
-      example line, not optional to the contract.
+      "points"/"steps" (drag); and "path"/"type" (rclip). A field the
+      example omits is unused by that example line, not optional to the
+      contract.
     - Every op keeps "line" and "src" for error reporting.
     - "keys" is a list of chords: k[]ctrl+shift+a b ->
       [["ctrl","shift","a"],["b"]].
     - "mods" and modifier key names are symbols (ctrl shift alt meta
       primary); the executing backend maps them to OS key codes, so the IR
       is built before the target OS is known.
-    - [f] file contents are inlined ("text" carries them); the executing
-      process reads no files of yours.
+    - [f] file contents are inlined ("text" carries them); rclip's "path"
+      is deliberately not inlined and is read by the executing target.
     - Capture ops carry label, frame, scale, format, count and interval but
       NO output path; qclip[f] carries no path either. Paths are a local
       concern.
@@ -747,6 +756,8 @@ grep for it.
   line length            64 KiB; an [f] file is a separate 64 KiB (for a
                          <dest> the line with the contents inlined in
                          escaped form must itself fit 64 KiB)
+  rclip source file      <= 64 MiB
+  rclip image pixels     <= 64 MiPixels
   k keys sequential      64
   k keys per chord       8 including flags
   scroll ticks           1..50
@@ -897,6 +908,9 @@ grep for it.
   gotto-hando local 'kd[]shift' 'c[]100,100' 'c[]300,100' 'ku[]shift'
   # Save the target clipboard to a local file
   gotto-hando winbox 'k[c]a' 'k[c]c' 'qclip[f]./selection.txt'
+  # Copy an image to the target first, then load it into that target clipboard
+  scp ./shot.png winbox:/tmp/shot.png && \
+    gotto-hando winbox 'rclip[]/tmp/shot.png' 'k[p]v'
   # Launch an app, wait for its window, run a command on the target
   gotto-hando winbox 'open[wait=10s]blender' 'win[]Blender' \
                      'exec[]blender --version' 'exec[shell]dir /b C:\work'
