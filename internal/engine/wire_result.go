@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/kang-sw/gotto-hando/internal/backend"
 )
@@ -19,7 +20,7 @@ import (
 // fields is the whole decoded per-line JSON object (line/status/cmd/t_ms
 // included; unused keys are ignored by the per-cmd decode below). Only
 // the commands whose plain Detail/Extra depend on engine-computed fields
-// need an entry here - qinfo, qclip, win (focus), qwin, qdisp, qmouse,
+// need an entry here - qinfo, qclip, rclip, win (focus), qwin, qdisp, qmouse,
 // exec. Every other command kind has no Detail in plain mode today either
 // (execute()'s switch never sets one for them), so the caller's generic
 // no-Detail fallback is already correct for them; cap is intentionally
@@ -63,6 +64,25 @@ func ResultDetailFromJSON(cmd string, fields map[string]json.RawMessage) (detail
 			return "", nil, false, false
 		}
 		return v.Text, nil, true, true
+
+	case "rclip":
+		var v struct {
+			Type   string `json:"type"`
+			Bytes  int    `json:"bytes"`
+			Width  int    `json:"width"`
+			Height int    `json:"height"`
+		}
+		if !decodeFields(fields, &v) || (v.Type != "text" && v.Type != "image") || v.Bytes < 0 {
+			return "", nil, false, false
+		}
+		detail := fmt.Sprintf("type=%s bytes=%d", v.Type, v.Bytes)
+		if v.Type == "image" {
+			if v.Width <= 0 || v.Height <= 0 {
+				return "", nil, false, false
+			}
+			detail += fmt.Sprintf(" %dx%d", v.Width, v.Height)
+		}
+		return detail, nil, false, true
 
 	case "win":
 		var v struct {

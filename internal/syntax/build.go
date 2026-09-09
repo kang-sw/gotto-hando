@@ -59,6 +59,22 @@ func buildOp(line int, src string, spec cmdSpec, m modSet, payload string, paylo
 		}
 		return op, nil
 
+	case plRclip:
+		if trimmed == "" {
+			return nil, syntaxDiag(line, payloadCol, src, "rclip requires a file path")
+		}
+		if m.words["img"] && m.words["txt"] {
+			return nil, syntaxDiag(line, payloadCol, src, "rclip img and txt modifiers are mutually exclusive")
+		}
+		op.Path, op.RClipType = trimmed, "auto"
+		if m.words["img"] {
+			op.RClipType = "image"
+		}
+		if m.words["txt"] {
+			op.RClipType = "text"
+		}
+		return op, nil
+
 	case plPoint:
 		if trimmed == "" {
 			return nil, syntaxDiag(line, payloadCol, src, spec.name+" requires x,y")

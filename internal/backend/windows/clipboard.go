@@ -7,6 +7,7 @@ import (
 	"errors"
 	"unsafe"
 
+	"github.com/kang-sw/gotto-hando/internal/backend"
 	"golang.org/x/sys/windows"
 )
 
@@ -74,6 +75,63 @@ func (b *Backend) ClipboardSet(ctx context.Context, s string) error {
 		return errClipboardSetFailed
 	}
 	return nil
+}
+
+// ClipboardSetImage registers PNG and sets it alongside a top-down 32-bit
+// CF_DIB. Each successful SetClipboardData takes ownership of its HGLOBAL.
+func (b *Backend) ClipboardSetImage(ctx context.Context, image backend.ClipboardImage) error {
+	if image.Width <= 0 || image.Height <= 0 || len(image.RGBA) != image.Width*image.Height*4 || len(image.PNG) == 0 {
+		return errors.New("invalid normalized clipboard image")
+	}
+	if err := openClipboard(); err != nil {
+		return err
+	}
+	defer procCloseClipboard.Call()
+	procEmptyClipboard.Call()
+	pngName, err := windows.UTF16PtrFromString("PNG")
+	if err != nil {
+		return err
+	}
+	pngFormat, _, _ := procRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(pngName)))
+	if pngFormat == 0 {
+		return errors.New("RegisterClipboardFormatW(PNG) failed")
+	}
+	if err := setClipboardBytes(pngFormat, image.PNG); err != nil {
+		return err
+	}
+	if err := setClipboardBytes(cfDIB, dibFromRGBA(image)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func setClipboardBytes(format uintptr, data []byte) error {
+	h, _, _ := procGlobalAlloc.Call(gmemMoveable, uintptr(len(data)))
+	if h == 0 {
+		return errors.New("GlobalAlloc failed")
+	}
+	ptr, _, _ := procGlobalLock.Call(h)
+	if ptr == 0 {
+		procGlobalFree.Call(h)
+		return errors.New("GlobalLock failed")
+	}
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(ptr)), len(data)), data)
+	procGlobalUnlock.Call(h)
+	if r, _, _ := procSetClipboardData.Call(format, h); r == 0 {
+		procGlobalFree.Call(h)
+		return errClipboardSetFailed
+	}
+	return nil
+}
+
+func dibFromRGBA(image backend.ClipboardImage) []byte {
+	bi := bitmapInfoHeader{biSize: uint32(unsafe.Sizeof(bitmapInfoHeader{})), biWidth: int32(image.Width), biHeight: -int32(image.Height), biPlanes: 1, biBitCount: 32, biCompression: biRGB, biSizeImage: uint32(len(image.RGBA))}
+	data := make([]byte, unsafe.Sizeof(bi)+uintptr(len(image.RGBA)))
+	*(*bitmapInfoHeader)(unsafe.Pointer(&data[0])) = bi
+	for i := 0; i < len(image.RGBA); i += 4 {
+		data[unsafe.Sizeof(bi)+uintptr(i)], data[unsafe.Sizeof(bi)+uintptr(i+1)], data[unsafe.Sizeof(bi)+uintptr(i+2)], data[unsafe.Sizeof(bi)+uintptr(i+3)] = image.RGBA[i+2], image.RGBA[i+1], image.RGBA[i], image.RGBA[i+3]
+	}
+	return data
 }
 
 // ClipboardGet reads the target's clipboard (help.txt:356-358: qclip). A

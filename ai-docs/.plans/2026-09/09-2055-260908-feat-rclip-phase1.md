@@ -1,0 +1,39 @@
+# Plan: rclip: load a file on the target machine into its clipboard — Phase 1
+
+## Relevant Ticket Contract
+- Add `rclip[]<path>` to the CLIPBOARD group.  The executing machine resolves and reads `path`: local for `local`, remote for `<dest>`/bridge.  `img` and `txt` are named modifier tokens; auto selects image for `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.tif`, and `.tiff`, otherwise UTF-8 text.
+- Image input is decoded and published as PNG plus TIFF on macOS, and registered `PNG` plus `CF_DIB` on Windows; text is platform plain text.  Source-file bytes (before conversion) are reported with type and, for images, dimensions.  Every read/decode/clipboard failure, including missing file and invalid UTF-8, is runtime `E_CLIPBOARD`; the 64 MiB source-file ceiling applies.
+- `rclip` gets normal global/`d=` delay, does not change `[f]` semantics or the 64 KiB sequence-line limit, and must work through CLI IR, ssh, and the session bridge.  Help text is normative and must gain syntax, command, output/JSONL/IR, limit, example, and remote-file-consumer coverage.
+
+## Out of Scope
+- A paste modifier or a new `rpaste` command; `rclip` followed by `k[p]v` remains the contract.
+- Uploading source files or changing `[f]`, capture/qclip inline relay, bridge protocol framing, or Windows live-GUI/WDAC acceptance policy.
+- Animated-GIF frame sequencing; decode the normal Go image first frame as one clipboard image.
+
+## Codebase Findings
+- `internal/syntax/commands.go#L70-L100` and `internal/syntax/build.go#L274-L300` centralize command registration and `f` text payload handling.  `rclip` needs a distinct target-path payload and word modifiers, so it must not enter `syntax.Inline`'s local `[f]` read path (`internal/syntax/inline.go#L14-L29`).
+- `internal/ir/ops.go#L111-L146`, `internal/ir/json.go#L45-L115`, and `internal/ir/json_decode.go#L115-L152` define the wide op and both directions of the bridge IR wire.  Adding the kind, path, and `auto|image|text` fields in all three preserves CLI `--ir` and bridge round trips.
+- `internal/engine/run.go#L285-L318` maps existing clipboard failures to `E_CLIPBOARD`; `internal/backend/backend.go#L146-L180` is the narrow backend seam.  Add an image clipboard request carrying normalized PNG/TIFF/RGBA data and dimensions, while retaining the existing text method.
+- `internal/backend/darwin/clipboard.go#L15-L79` already owns AppKit initialization, pasteboard clearing, selectors, and CF lifetime.  It needs `NSData`/`setData:forType:` bindings for `public.png` and `public.tiff` alongside the text path.
+- `internal/backend/windows/clipboard.go#L19-L76` already has the correct `OpenClipboard`/`EmptyClipboard`/movable-`HGLOBAL` ownership shape.  `internal/backend/windows/capture.go#L209-L269` supplies the reusable 32-bit `BITMAPINFOHEADER` and RGBA/BGRA convention for a top-down `CF_DIB`.
+- `internal/remote/rewrite.go#L61-L106` rewrites only `[f]` forms; an `rclip` path must pass unchanged.  `internal/remote/relay.go#L61-L109` and `cmd/gotto-hando/bridge_relay.go#L54-L99` already relay ordinary no-detail result lines byte-for-byte in JSONL and reconstruct plain results, so an `rclip` result only needs its normal `detail`/JSON fields represented by `output.Result`.
+- Go 1.25 standard packages decode PNG/JPEG/GIF, but not BMP/TIFF.  Pin `golang.org/x/image v0.45.0` (declares Go 1.25) solely for blank-import decoder registration (`bmp`, `tiff`) and TIFF encoding; do not upgrade unrelated modules.  The untracked `handoff.md#L43-L51` no-new-dependency check was prior validation evidence, while the accepted ticket explicitly promises BMP/TIFF.
+
+## Implementation Plan
+1. Extend `assets/help.txt` and `assets/help-remote.txt` first as the contract: document `rclip`, named `img`/`txt` modifier tokens, extension auto-selection/override, target-local path resolution, `E_CLIPBOARD`, `type=`, source `bytes=`, image dimensions, the 64 MiB source limit, JSONL/IR fields, and the scp-to-`rclip` remote example/consumer wording.
+2. Add `KindRClip`, `Path`, and `RClipType` (`auto`, `image`, `text`) in `internal/ir`; add ordered marshal/unmarshal cases and extend all-kinds IR round-trip fixtures.  Add parser payload/build support that rejects missing paths and incompatible/repeated modifiers, leaves the path uninterpreted, and uses the usual per-line delay only.
+3. Add a small GOOS-neutral image-loader/normalizer at the engine/backend boundary.  Stat the target path, reject more than 64 MiB before reading, use a bounded reader, map extension/flag selection, validate text UTF-8, and decode image formats through standard image codecs plus `x/image/bmp`/`tiff`.  Decode configuration before allocation, reject non-positive, overflow-prone, or more than 64 MiPixels dimensions with `E_CLIPBOARD`, and add that decode safety limit to `assets/help.txt`/`internal/ir` LIMITS so conversion buffers are bounded.  Normalize once to PNG, TIFF, and tightly packed RGBA while retaining original byte count and `WxH`; preserve the complete advertised extension set within that documented safety bound.
+4. Extend `backend.Backend`, `internal/backend/dryrun`, and `internal/engine/run.go` for `rclip`: load at execution time, call text/image writers, render `rclip type=text|image bytes=N [WxH]`, emit equivalent JSON key/value fields, preserve `-k` continuation after `E_CLIPBOARD`, and apply the standard post-op delay.
+5. Extend `internal/backend/darwin/clipboard.go`/`ffi.go` to clear once and publish CF/NSData-backed normalized PNG and TIFF with `setData:forType:`.  Release temporary native data only after each call returns and treat either failed pasteboard write as an error; retain the existing NSString text path.
+6. Extend `internal/backend/windows/clipboard.go`/`ffi.go` to register `PNG`, allocate separate movable `HGLOBAL`s for normalized PNG and a 32-bit top-down `CF_DIB`, convert RGBA to BGRA, and call `SetClipboardData` for both.  On every failure before ownership transfer, unlock/free the relevant block; after a successful call, never free it.  Reuse `bitmapInfoHeader`/`biRGB` and add the minimal new LazyDLL proc/constants only for registration.
+7. Keep `internal/remote.Rewrite` unchanged for `rclip` paths, but extend remote, bridge, and plain-relay tests so `rclip[]<target-path>` survives local parse → rewritten stdin → remote parse/IR → bridge decode unchanged and its ordinary result has identical plain/JSONL rendering.
+
+## Verification Plan
+- Add parser/IR tests for auto extension mapping (case-insensitive suffixes), `img`/`txt` override, missing path/modifier rejection, serialized `path`/`type`, and `Marshal → Unmarshal → Marshal` equality.
+- Add loader tests using generated PNG/JPEG/GIF/BMP/TIFF fixtures for normalized PNG/TIFF/RGBA dimensions, invalid UTF-8 text, unreadable/missing file, over-64-MiB source, malformed input, and configured decode-bound failure; assert all are `E_CLIPBOARD` at runtime and that `-k` runs the next op.
+- Add dryrun engine and CLI tests for source-byte/dimension plain and JSONL output plus default/`d=` delay behavior.  Extend ssh-wrapper and bridge relay fixtures to verify a target path remains literal and ordinary `rclip` result lines relay byte-identically in JSONL and equivalently in plain mode.
+- Add native ownership-focused tests: Darwin selector/data publication and both type-write failure paths; Windows pure helpers for DIB header/BGRA bytes plus allocation/ownership branches.  Run `go test ./...`, `go test -tags dryrun ./cmd/gotto-hando`, `go build ./...`, and `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./...`; cross-compile Windows tests as current workflow requires.
+- On this macOS host, run `rclip[]<fixture.png>` then inspect pasteboard types and paste into Preview.  Defer real Windows Paint and Windows remote/WDAC acceptance, as authorized.
+
+## Escalations
+- None.

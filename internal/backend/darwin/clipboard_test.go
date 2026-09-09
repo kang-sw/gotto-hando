@@ -31,3 +31,13 @@ func TestClipboardSetGetRoundTrip(t *testing.T) {
 		t.Fatalf("ClipboardGet() = %q, want %q", got, want)
 	}
 }
+
+func TestClipboardImageUsesOwnedNSDataSelectors(t *testing.T) {
+	if err := initFFI(); err != nil {
+		t.Fatalf("initFFI: %v", err)
+	}
+	initClipboard()
+	if selAlloc == 0 || selInitWithBytesLength == 0 || selRelease == 0 {
+		t.Fatalf("owned NSData selectors not initialized: alloc=%v init=%v release=%v", selAlloc, selInitWithBytesLength, selRelease)
+	}
+}

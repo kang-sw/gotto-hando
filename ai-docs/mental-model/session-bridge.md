@@ -17,6 +17,33 @@ captures only what the code cannot make obvious on its own.
 
 ## Domain Rules
 
+- **`rclip` carries an executor-owned path across every forwarding boundary;
+  its loader must prove the opened object is a bounded regular file before
+  reading it.** `syntax.Inline` and `internal/remote.Rewrite` may read and
+  rewrite `[f]` payloads on the caller, but must leave `ir.Op.RClipPath`
+  alone so `engine.loadRClip` runs in the local target process or the GUI
+  bridge. The loader checks a path before opening it and the opened descriptor
+  again afterwards, because a replacement between those checks can turn a
+  regular path into a FIFO or device. On supported Unix targets `openRClip`
+  uses `O_NONBLOCK`; on Windows it requests `FILE_FLAG_OVERLAPPED`; only then
+  can the second check reject a substituted pipe without stalling the resident
+  bridge. Keep the build-tag split exhaustive: the portable `os.Open`
+  fallback is needed for non-desktop GOOS builds, while Unix additions belong
+  in the nonblocking implementation. This boundary is covered by
+  `internal/engine/rclip_loader_test.go`, the forwarding checks in
+  `internal/remote/rewrite_test.go`, and the target-path bridge fixture in
+  `internal/bridge/session_test.go`.
+
+- **The Darwin image clipboard path must release each explicitly allocated
+  `NSData` immediately after `setData:forType:`.** `ClipboardSetImage` uses
+  `alloc`/`initWithBytes:length:` rather than an autoreleased convenience
+  constructor, and the bridge process has no autorelease pool and can serve
+  runs indefinitely. Retaining either PNG or TIFF data after the synchronous
+  pasteboard call therefore becomes a per-image resident-bridge memory leak.
+  Keep the release paired with every successfully initialized `NSData`, even
+  on a failed pasteboard write; `clipboard_test.go` asserts the owned-selector
+  set is initialized.
+
 - **`internal/bridge/session.go`'s `Handle` must set `InlineCaptures: true`
   in the `engine.RunOptions` it builds for a normal run.** This field is
   GOOS-agnostic, so it governs both the macOS and Windows bridges. Without

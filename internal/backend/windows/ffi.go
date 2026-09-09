@@ -46,15 +46,16 @@ var (
 	procGetUserObjectInformationW = user32.NewProc("GetUserObjectInformationW")
 
 	// Clipboard (clipboard.go).
-	procOpenClipboard    = user32.NewProc("OpenClipboard")
-	procEmptyClipboard   = user32.NewProc("EmptyClipboard")
-	procGetClipboardData = user32.NewProc("GetClipboardData")
-	procSetClipboardData = user32.NewProc("SetClipboardData")
-	procCloseClipboard   = user32.NewProc("CloseClipboard")
-	procGlobalAlloc      = kernel32.NewProc("GlobalAlloc")
-	procGlobalLock       = kernel32.NewProc("GlobalLock")
-	procGlobalUnlock     = kernel32.NewProc("GlobalUnlock")
-	procGlobalFree       = kernel32.NewProc("GlobalFree")
+	procOpenClipboard            = user32.NewProc("OpenClipboard")
+	procEmptyClipboard           = user32.NewProc("EmptyClipboard")
+	procGetClipboardData         = user32.NewProc("GetClipboardData")
+	procSetClipboardData         = user32.NewProc("SetClipboardData")
+	procRegisterClipboardFormatW = user32.NewProc("RegisterClipboardFormatW")
+	procCloseClipboard           = user32.NewProc("CloseClipboard")
+	procGlobalAlloc              = kernel32.NewProc("GlobalAlloc")
+	procGlobalLock               = kernel32.NewProc("GlobalLock")
+	procGlobalUnlock             = kernel32.NewProc("GlobalUnlock")
+	procGlobalFree               = kernel32.NewProc("GlobalFree")
 
 	// Named-pipe busy-retry (bridge_pipe.go's DialBridge). x/sys/windows
 	// does not wrap WaitNamedPipe.
@@ -137,6 +138,7 @@ const uoiName = 2
 // CF_UNICODETEXT / GMEM_MOVEABLE (clipboard.go).
 const (
 	cfUnicodeText = 13
+	cfDIB         = 8
 	gmemMoveable  = 0x0002
 )
 

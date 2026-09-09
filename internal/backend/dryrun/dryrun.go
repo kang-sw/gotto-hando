@@ -107,6 +107,10 @@ func (b *Backend) ClipboardSet(_ context.Context, s string) error {
 	return b.record("ClipboardSet %q", s)
 }
 
+func (b *Backend) ClipboardSetImage(_ context.Context, image backend.ClipboardImage) error {
+	return b.record("ClipboardSetImage %dx%d png=%d tiff=%d", image.Width, image.Height, len(image.PNG), len(image.TIFF))
+}
+
 func (b *Backend) MousePos(context.Context) (backend.Point, error) {
 	if err := b.record("MousePos"); err != nil {
 		return backend.Point{}, err

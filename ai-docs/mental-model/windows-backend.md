@@ -44,6 +44,18 @@ this Go-less-target project.
   driver-dependent, `E_CAPTURE`-surfacing contract violation that "often works
   on Windows 10" and thus hides on casual testing.
 
+- **`SetClipboardData` is the ownership transfer point for each rclip image
+  `HGLOBAL`.** `setClipboardBytes` must free the movable allocation when
+  `GlobalLock` or `SetClipboardData` fails, and must never free it after a
+  successful `SetClipboardData`: Windows owns it then. `ClipboardSetImage`
+  publishes both registered `PNG` and `CF_DIB`, so applying the rule to only
+  one representation either leaks failed writes or corrupts a clipboard-owned
+  block. This matters in the resident bridge, whose process survives many
+  clipboard writes; mirror the existing text clipboard ownership shape when
+  changing either path. `TestDIBFromRGBAUsesTopDownBGRA` validates the pure
+  DIB conversion, but this success/failure ownership boundary is FFI behavior
+  and is not observable in that unit test.
+
 ## Verification Reality
 
 Go is not installed on the Windows target box, so windows-gated code is
@@ -51,5 +63,5 @@ verified here only by cross-compile (`CGO_ENABLED=0 GOOS=windows GOARCH=amd64
 go build ./...` + `go vet` + `go test -c`) plus pure-logic unit tests off
 synthetic fixtures; live FFI behavior (real `EnumWindows`, GDI capture, Job
 Object tree-kill, `ShellExecuteExW`) is confirmed only over the session bridge
-against a real GUI session. Treat the three rules above as load-bearing
+against a real GUI session. Treat these rules as load-bearing
 precisely because no local test exercises the paths they govern.

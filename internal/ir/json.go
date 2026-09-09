@@ -73,6 +73,8 @@ func opNode(o *Op) node {
 		pairs = append(pairs, kv{"text", str(o.Text)}, kv{"settle_ms", num(o.IntervalMS)})
 	case KindQueryClip:
 		pairs = append(pairs, kv{"to_file", boolean(o.FromFile)})
+	case KindRClip:
+		pairs = append(pairs, kv{"path", str(o.Path)}, kv{"type", str(o.RClipType)})
 	case KindMove:
 		pairs = append(pairs, kv{"point", pointNode(o.Point)}, kv{"duration_ms", num(o.DurationMS)})
 	case KindClick:

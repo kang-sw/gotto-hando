@@ -150,6 +150,15 @@ func decodeOp(raw json.RawMessage) (Op, error) {
 		}
 		o.Kind = KindQueryClip
 		o.FromFile = f.ToFile
+	case KindRClip:
+		var f struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &f); err != nil {
+			return Op{}, fmt.Errorf("ir: decode read_clipboard: %w", err)
+		}
+		o.Kind, o.Path, o.RClipType = KindRClip, f.Path, f.Type
 	case KindMove:
 		var f struct {
 			Point      jsonPoint `json:"point"`

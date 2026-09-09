@@ -69,6 +69,22 @@ func TestResultDetailFromJSONQclip(t *testing.T) {
 	}
 }
 
+func TestResultDetailFromJSONRClip(t *testing.T) {
+	imageFields := map[string]json.RawMessage{
+		"type": json.RawMessage(`"image"`), "bytes": json.RawMessage(`1234`),
+		"width": json.RawMessage(`2`), "height": json.RawMessage(`3`),
+	}
+	detail, _, alwaysShow, ok := engine.ResultDetailFromJSON("rclip", imageFields)
+	if !ok || alwaysShow || detail != "type=image bytes=1234 2x3" {
+		t.Fatalf("image result = (%q, %v, %v)", detail, alwaysShow, ok)
+	}
+	textFields := map[string]json.RawMessage{"type": json.RawMessage(`"text"`), "bytes": json.RawMessage(`5`)}
+	detail, _, _, ok = engine.ResultDetailFromJSON("rclip", textFields)
+	if !ok || detail != "type=text bytes=5" {
+		t.Fatalf("text result = (%q, ok=%v)", detail, ok)
+	}
+}
+
 func TestResultDetailFromJSONWin(t *testing.T) {
 	seq := parse(t, "win[]Blender")
 	be := &dryrun.Backend{WindowsResult: []backend.Window{

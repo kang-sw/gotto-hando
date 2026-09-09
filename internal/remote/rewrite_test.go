@@ -86,7 +86,7 @@ func TestRewriteQClip(t *testing.T) {
 // TestRewritePassesThroughNonFileLines asserts every line without an [f]
 // payload is sent verbatim, byte-identical to what the caller wrote.
 func TestRewritePassesThroughNonFileLines(t *testing.T) {
-	lines := []string{"qinfo", "k[]a", "txt[]literal", "cap"}
+	lines := []string{"qinfo", "k[]a", "txt[]literal", "cap", "rclip[img]/target/shot.bmp"}
 	seq := parseInlined(t, lines)
 	rewritten, qclips, diags := Rewrite(lines, seq)
 	if len(diags) != 0 {
@@ -99,6 +99,14 @@ func TestRewritePassesThroughNonFileLines(t *testing.T) {
 		if rewritten[i] != l {
 			t.Errorf("rewritten[%d] = %q, want verbatim %q", i, rewritten[i], l)
 		}
+	}
+	remoteSeq, remoteDiags := syntax.Parse(rewritten, ir.DefaultState())
+	if len(remoteDiags) != 0 {
+		t.Fatalf("remote parse diagnostics = %+v", remoteDiags)
+	}
+	op := remoteSeq.Ops[len(remoteSeq.Ops)-1]
+	if op.Kind != ir.KindRClip || op.Path != "/target/shot.bmp" || op.RClipType != "image" {
+		t.Fatalf("remote rclip op = %+v", op)
 	}
 }
 

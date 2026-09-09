@@ -17,6 +17,8 @@ import (
 // spaces immediately after the 2-space anchor and so never matches this
 // pattern - it is folded into the preceding row's value instead.
 var limitRowRE = regexp.MustCompile(`^  (\S.*?)  +(\S.*)$`)
+var leadingMiBRE = regexp.MustCompile(`^<= (\d+) MiB`)
+var leadingMiPixelsRE = regexp.MustCompile(`^<= (\d+) MiPixels`)
 
 // extractLimitsRows returns the LIMITS section as name -> concatenated
 // value text (continuation lines joined onto the row that owns them with
@@ -132,6 +134,16 @@ func TestLimitsDriftAgainstConstants(t *testing.T) {
 		check("line length", kib*1024, MaxLineBytes)
 	} else {
 		t.Error("LIMITS row \"line length\" not found")
+	}
+	if v, ok := rows["rclip source file"]; ok {
+		check("rclip source file", mustInt(t, leadingMiBRE, v, "rclip source file")*1024*1024, MaxRClipBytes)
+	} else {
+		t.Error("LIMITS row \"rclip source file\" not found")
+	}
+	if v, ok := rows["rclip image pixels"]; ok {
+		check("rclip image pixels", mustInt(t, leadingMiPixelsRE, v, "rclip image pixels")*1024*1024, MaxRClipPixels)
+	} else {
+		t.Error("LIMITS row \"rclip image pixels\" not found")
 	}
 
 	if v, ok := rows["k keys sequential"]; ok {
