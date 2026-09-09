@@ -131,6 +131,34 @@ func TestHandleNormalRunProducesStartResultsDone(t *testing.T) {
 	}
 }
 
+func TestHandleRClipExecutesTargetPathAndStreamsMetadata(t *testing.T) {
+	path := t.TempDir() + "/target.txt"
+	if err := os.WriteFile(path, []byte("bridge"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	seq := parseSeq(t, "rclip[]"+path)
+	be := &dryrun.Backend{}
+	sess := &bridge.Session{Backend: be}
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	go func() { sess.Handle(context.Background(), server); close(done) }()
+	go writeRequest(t, client, seq, bridge.RunEnvelope{})
+	events := readEvents(t, client)
+	<-done
+	if len(events) != 3 || events[1].Cmd != "rclip" || events[1].Status != "ok" {
+		t.Fatalf("events = %+v", events)
+	}
+	if got := events[1].raw["type"]; got != "text" {
+		t.Errorf("type = %v", got)
+	}
+	if got := events[1].raw["bytes"]; got != float64(6) {
+		t.Errorf("bytes = %v", got)
+	}
+	if len(be.Calls) < 2 || !strings.Contains(be.Calls[1], "ClipboardSet") {
+		t.Fatalf("calls = %v", be.Calls)
+	}
+}
+
 // (b) an IR "v" mismatch -> start then abort E_CONNECT, no done.
 func TestHandleVersionMismatchAborts(t *testing.T) {
 	seq := parseSeq(t, "qinfo")
