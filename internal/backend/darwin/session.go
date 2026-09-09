@@ -24,10 +24,14 @@ const (
 //     the console, e.g. fast user switching) -> "inactive".
 //
 // "bridge" (this process is an ssh-started run answered by a GUI-session
-// `gotto-hando --bridge`) has no real detection logic yet: --bridge does
-// not exist until 260908-feat-remote-ssh, so a local darwin run can never
-// legitimately observe it. The branch stays reserved here rather than
-// wired to a real probe, per the ticket's Out of Scope.
+// `gotto-hando --bridge`) is never returned by sessionState() itself: a
+// local darwin run's own session probe can only ever observe "active"/
+// "locked"/"inactive" via CGSessionCopyCurrentDictionary. "bridge" is
+// wired in via a separate probe swap instead - backend.go's NewBridge()
+// substitutes bridgeSessionProbe{} (probes.go) for sessionProbe on the
+// Backend that `gotto-hando --bridge` (260908-feat-remote-ssh Phase 2)
+// constructs, so qinfo answered through the bridge always reports
+// session=bridge without this function ever needing a "bridge" branch.
 func sessionState() string {
 	dict := cgSessionCopyCurrentDictionary()
 	if dict == 0 {

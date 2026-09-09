@@ -264,3 +264,31 @@ func TestPreflightOpenWithoutWaitNeedsNoAccessibility(t *testing.T) {
 		t.Fatalf("Preflight() = %v, want nil (open without wait= needs no Accessibility)", err)
 	}
 }
+
+// RequiresSession is Preflight check 1's own exempt-kind test, exported so
+// cmd/gotto-hando's `local` dispatch can make the identical forward-vs-
+// in-process bridge-routing decision (260908-feat-remote-ssh Phase 2,
+// shouldForwardToBridge) from one source of truth - mirrors windows's own
+// RequiresSession contract.
+func TestRequiresSessionExemptSequenceIsFalse(t *testing.T) {
+	seq := seqOf(
+		ir.Op{Kind: ir.KindQueryInfo},
+		ir.Op{Kind: ir.KindQueryDisp},
+		ir.Op{Kind: ir.KindQueryMouse},
+		ir.Op{Kind: ir.KindSleep},
+		ir.Op{Kind: ir.KindSet},
+	)
+	if RequiresSession(seq) {
+		t.Errorf("RequiresSession(%+v) = true, want false (query-only sequence is exempt)", seq)
+	}
+}
+
+func TestRequiresSessionNonExemptOpIsTrue(t *testing.T) {
+	seq := seqOf(
+		ir.Op{Kind: ir.KindQueryInfo},
+		ir.Op{Kind: ir.KindKey, Keys: [][]string{{"a"}}},
+	)
+	if !RequiresSession(seq) {
+		t.Errorf("RequiresSession(%+v) = false, want true (a `k` op is not exempt)", seq)
+	}
+}
