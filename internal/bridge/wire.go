@@ -44,20 +44,45 @@ type RunEnvelope struct {
 // (the ssh-wrapped <dest> transport) can revisit.
 
 // decodeRequest decodes one bridge request body: the IR sequence via
-// ir.Unmarshal (which ignores unknown top-level keys, including "run"),
-// plus the run envelope from the same bytes.
-func decodeRequest(data []byte) (*ir.Sequence, RunEnvelope, error) {
+// ir.Unmarshal (which ignores unknown top-level keys, including "run" and
+// "request_perms"), the run envelope, and whether this request is a
+// --request-perms request (help-remote.txt SESSION BRIDGE "Protocol":
+// {"v":1,"request_perms":true} carries no "ops"/"run" at all, which
+// ir.Unmarshal tolerates) - all from the same bytes.
+func decodeRequest(data []byte) (*ir.Sequence, RunEnvelope, bool, error) {
 	seq, err := ir.Unmarshal(data)
 	if err != nil {
-		return nil, RunEnvelope{}, err
+		return nil, RunEnvelope{}, false, err
 	}
 	var wrapped struct {
-		Run RunEnvelope `json:"run"`
+		Run          RunEnvelope `json:"run"`
+		RequestPerms bool        `json:"request_perms"`
 	}
 	if err := json.Unmarshal(data, &wrapped); err != nil {
-		return nil, RunEnvelope{}, err
+		return nil, RunEnvelope{}, false, err
 	}
-	return seq, wrapped.Run, nil
+	return seq, wrapped.Run, wrapped.RequestPerms, nil
+}
+
+// requestPermsBody is the wire shape EncodeRequestPerms/decodeRequest
+// agree on for --request-perms (help-remote.txt SESSION BRIDGE :122-129):
+// {"v":<ir.SchemaVersion>,"request_perms":true} - no "ops"/"run" key at
+// all.
+type requestPermsBody struct {
+	V            int  `json:"v"`
+	RequestPerms bool `json:"request_perms"`
+}
+
+// EncodeRequestPerms builds the bridge's --request-perms request body
+// (help-remote.txt SESSION BRIDGE :122-129). Exported so cmd/gotto-hando's
+// darwin bridge-forwarding --request-perms path (dispatch_darwin.go's
+// requestPerms) reuses the identical wire shape this package's own tests
+// build against, mirroring EncodeRequest's doc pattern. json.Marshal on
+// this fixed, simple struct never errors, so the error is discarded rather
+// than threaded through every call site.
+func EncodeRequestPerms() []byte {
+	b, _ := json.Marshal(requestPermsBody{V: ir.SchemaVersion, RequestPerms: true})
+	return b
 }
 
 // EncodeRequest builds one bridge request body: seq's IR JSON compacted to

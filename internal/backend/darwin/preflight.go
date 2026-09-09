@@ -137,6 +137,22 @@ func (b *Backend) Preflight(ctx context.Context, seq *ir.Sequence) error {
 	return nil
 }
 
+// RequiresSession reports whether seq contains any op outside
+// exemptFromSession - the same exempt-kind check Preflight's check 1 uses,
+// exported so cmd/gotto-hando's `local` dispatch can make the identical
+// forward-vs-in-process routing decision (260908-feat-remote-ssh Phase 2,
+// shouldForwardToBridge) from one source of truth instead of re-deriving
+// the kind list. Mirrors internal/backend/windows/preflight.go's
+// RequiresSession verbatim.
+func RequiresSession(seq *ir.Sequence) bool {
+	for i := range seq.Ops {
+		if !exemptFromSession[seq.Ops[i].Kind] {
+			return true
+		}
+	}
+	return false
+}
+
 func pointInRect(x, y float64, rx, ry, rw, rh int) bool {
 	return x >= float64(rx) && x <= float64(rx+rw) && y >= float64(ry) && y <= float64(ry+rh)
 }

@@ -436,3 +436,104 @@ run, releases the key (visible in bridge.log and in a following `qinfo`/
 `cap`) and accepts the next caller; on a fresh macOS signing identity
 `--request-perms` over ssh raises the prompt on the Mac's screen and the
 local side prints the perms line / object with the documented exit code. Each recipe is verified end to end: the LaunchAgent (macOS) and Task Scheduler (Windows) recipes from the platform help files, started from a fresh login, bring up a bridge that a subsequent `gotto-hando <dest> 'qinfo'` reaches with `session=bridge`.
+
+### Result (7ec9f43) - 2026-09-09
+
+Range `8c8d71b..7ec9f43` on `impl/main/boxer-both-twig` (survey plan 8c8d71b;
+4 impl commits to 651944b; 1 review-fix commit to 7ec9f43). The macOS
+unix-socket session bridge and the shared `internal/bridge` `request_perms`
+wire message, mirroring the already-shipped Windows Phase-0 named-pipe bridge.
+Verified natively on this macOS host (real unix socket + `net.Pipe` +
+`dryrun` backend); real over-ssh / live LaunchAgent+Task Scheduler / fresh
+signing-identity acceptance deferred non-blocking, exactly as Phase 1's own
+over-ssh acceptance was.
+
+Behavioral delta:
+- `gotto-hando --bridge` on macOS is now a real resident listener on the
+  current-user unix socket `$HOME/Library/Application Support/gotto-hando/
+  bridge.sock` (dir 0700, socket file 0600 via explicit `os.Chmod` after
+  `MkdirAll`/bind, umask-safe), serving one connection at a time via the
+  GOOS-agnostic `bridge.Session`, until Ctrl-C/kill; a second bridge for the
+  same user exits 2 (`ErrBridgeAlreadyRunning`); `~/Library/Logs/gotto-hando/
+  bridge.log` records start/run/error lines. Single-instance is a
+  `net.DialTimeout` probe (not kernel-atomic like Windows), with
+  stale/crashed-leftover socket-file recovery.
+- `local` in a macOS ssh session (SSH_CONNECTION/SSH_TTY set) now forwards a
+  session-requiring sequence to that bridge (`session=bridge`) instead of
+  in-process injection, aborting E_SESSION after `start` (exit 4) with the
+  "start `gotto-hando --bridge` in the logged-on GUI session" hint when no
+  bridge is reachable; a qinfo-family/exempt-only sequence (`RequiresSession`
+  false) never dials. `qinfo` through the bridge reports `session=bridge`;
+  from the GUI terminal it reports the console session and never touches the
+  socket.
+- `gotto-hando <dest> --request-perms` to a macOS target now works end to end:
+  the remote-side `local --request-perms` detects it is ssh-started and
+  forwards a `{"v":1,"request_perms":true}` wire message to the bridge, which
+  runs `AXIsProcessTrustedWithOptions`/`CGRequestScreenCaptureAccess` in its
+  own GUI session (raising the real system prompts there) and answers a
+  `{"event":"perms","accessibility":"ok|missing","screen":"ok|missing"}`
+  object; both the direct and bridge-forwarded darwin paths now emit the
+  JSONL `start`+`perms` pair (previously the direct path printed only the
+  plain `perms=` line, so `<dest> --request-perms` to a mac was broken end to
+  end).
+
+Structural:
+- New darwin files: `bridge_socket.go` (unix-socket transport:
+  `ListenBridge`/`Accept`/`Close`/`DialBridge`, `ErrBridgeAlreadyRunning`/
+  `ErrListenerClosed`), `remote.go` (`IsRemoteSession`, env-var only - no
+  console-session-id/WinSta0 check, which is Windows-only); `backend.go`
+  gains `NewBridge()` (swaps `bridgeSessionProbe{}`, keeps every real probe,
+  calls `initFFI()`); `preflight.go` gains exported `RequiresSession`;
+  `probes.go` gains `bridgeSessionProbe`; `session.go`'s stale doc comment
+  updated. `dispatch_darwin.go`'s three stubs replaced with real
+  `runBridge`/`shouldForwardToBridge`/`forwardToBridge` + a bridge-forwarding
+  `requestPerms`.
+- Shared: `internal/bridge/wire.go` gains a `request_perms` decode field and
+  `EncodeRequestPerms()`; `session.go` gains a nil-safe `RequestPerms` func
+  field + `handleRequestPerms` branch, and now sets `InlineCaptures: true`
+  (fixes a stray-PNG-to-bridge-cwd disk write that affected BOTH platforms -
+  "the bridge writes nothing else to disk"). `internal/output.WritePermsEvent`
+  added. `cmd/gotto-hando/bridge_relay.go` (new, build-tag-free) holds the
+  five relay/decode helpers extracted verbatim from `dispatch_windows.go`
+  plus a shared `writePermsResult`, so both platforms share them (resolves
+  the Phase-0 duplication debt instead of doubling it).
+- No new dependency (unix socket is stdlib `net`/`os`/`path/filepath`); no
+  `assets/help*.txt` change (Spec Impact: none - the macOS bridge, socket
+  path, LaunchAgent recipe, and request-perms procedure were already in
+  help-macos.txt/help-remote.txt).
+
+Review (partitioned correctness/fit/test; review #1: 0 Critical, 1 Important,
+4 Minor; relay #1 fixed the Important; no re-review needed):
+- Important (test): `bridge_socket_test.go` asserted no filesystem permission
+  bits; relay added dir-0700 + socket-0600 `os.Stat().Mode().Perm()`
+  assertions (empirically verified the socket inode reads 0600 on this Mac)
+  and a real-socket caller-disconnect -> held-key-release test.
+- Minor (record-only, accepted): (correctness) the unix-socket single-instance
+  guard is a non-atomic dial-probe with a narrow concurrent-start race
+  (same-user/same-machine threat model - not a defect); (correctness)
+  plain-mode `cap` over the bridge without `--jsonl` now writes no PNG
+  anywhere (the primary `--jsonl` `<dest>` path is correct; forward note);
+  (fit) `okMissing` is duplicated across a package boundary (4 lines);
+  (test) the real-socket disconnect path was covered by the relay's added
+  test.
+
+Mental model: `ai-docs/mental-model/session-bridge.md` (2cf5b06) records the
+`InlineCaptures: true` requirement (both platforms) and the non-atomic
+dial-probe single-instance semantics (+ `SetUnlinkOnClose(false)` stale-file
+test detail).
+
+Verification: `go build ./...` native + `GOOS=windows` (`CGO_ENABLED=0`)
+clean; `go test ./... -race -count=1` all pass (darwin native); `-tags dryrun
+./cmd/gotto-hando` pass; `GOOS=windows go test -c` for cmd/gotto-hando,
+internal/backend/windows, internal/bridge compiles clean (shared
+`internal/bridge` changes leave the shipped Windows bridge intact -
+`Session.RequestPerms` stays nil there); `gofmt -l .` empty; `go vet ./...`
+only the 2 pre-existing `unsafe.Pointer` clipboard warnings; `git diff -- go.mod
+go.sum` empty.
+
+Deferred non-blocking (matches Phase 1's own boundary): real over-ssh
+acceptance against a live second Mac/Windows box; the LaunchAgent (macOS) and
+Task Scheduler (Windows) recipes started from a fresh login; a fresh macOS
+signing identity raising the `--request-perms` system prompt. The Windows
+half's real over-ssh acceptance additionally remains Device-Guard (WDAC)
+blocked (a user political-determination boundary, unchanged from Phase 1).

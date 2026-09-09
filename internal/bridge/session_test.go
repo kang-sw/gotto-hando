@@ -8,11 +8,13 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/kang-sw/gotto-hando/internal/backend"
 	"github.com/kang-sw/gotto-hando/internal/backend/dryrun"
 	"github.com/kang-sw/gotto-hando/internal/bridge"
 	"github.com/kang-sw/gotto-hando/internal/ir"
@@ -537,4 +539,142 @@ func TestHandleBoundsUnterminatedRequestRead(t *testing.T) {
 
 	client.Close()
 	<-writerDone
+}
+
+// (h) InlineCaptures regression (260908-feat-remote-ssh Phase 2 Codebase
+// Findings "public contract violation"): a cap op run through Handle must
+// return inline base64 "data" (never a "path") and must not write any file
+// to disk - proves the InlineCaptures: true fix. Before the fix, Handle
+// built engine.RunOptions without InlineCaptures, so a cap op fell into
+// internal/engine/capture.go's on-disk-write branch and wrote a stray PNG
+// into the bridge process's own working directory, violating
+// help-remote.txt SESSION BRIDGE's "the bridge writes nothing else to
+// disk".
+func TestHandleCaptureIsInlinedAndWritesNoFile(t *testing.T) {
+	dir := t.TempDir()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+
+	seq := parseSeq(t, "cap")
+	be := &dryrun.Backend{CaptureResult: backend.Image{W: 4, H: 3, Scale: 1, Pixels: make([]byte, 4*3*4)}}
+	sess := &bridge.Session{Backend: be}
+
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		sess.Handle(context.Background(), server)
+		close(done)
+	}()
+	go writeRequest(t, client, seq, bridge.RunEnvelope{})
+
+	events := readEvents(t, client)
+	<-done
+
+	if len(events) != 3 {
+		t.Fatalf("events = %+v, want 3 (start, cap result, done)", events)
+	}
+	capEvent := events[1]
+	if capEvent.Status != "ok" || capEvent.Cmd != "cap" {
+		t.Fatalf("events[1] = %+v, want ok/cap", capEvent)
+	}
+	if _, ok := capEvent.raw["data"]; !ok {
+		t.Errorf("cap event = %+v, want an inline \"data\" field", capEvent.raw)
+	}
+	if _, ok := capEvent.raw["path"]; ok {
+		t.Errorf("cap event = %+v, want no \"path\" field (inline captures never carry one)", capEvent.raw)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("working directory has %d entries after Handle, want 0 (the bridge must write nothing to disk): %v", len(entries), entries)
+	}
+}
+
+// (i) a --request-perms request whose RequestPerms callback succeeds gets
+// start + perms (help-remote.txt SESSION BRIDGE :122-129), bypasses the
+// engine entirely (no Backend call), and never reaches "done".
+func TestHandleRequestPermsSuccess(t *testing.T) {
+	be := &dryrun.Backend{}
+	sess := &bridge.Session{
+		Backend: be,
+		RequestPerms: func() (accessibility, screen bool, err error) {
+			return true, false, nil
+		},
+	}
+
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		sess.Handle(context.Background(), server)
+		close(done)
+	}()
+	go func() {
+		if _, err := client.Write(append(bridge.EncodeRequestPerms(), '\n')); err != nil {
+			t.Logf("write request_perms: %v", err)
+		}
+	}()
+
+	events := readEvents(t, client)
+	<-done
+
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want 2 (start, perms)", events)
+	}
+	if events[0].Event != "start" {
+		t.Errorf("events[0].Event = %q, want start", events[0].Event)
+	}
+	if events[1].Event != "perms" {
+		t.Fatalf("events[1].Event = %q, want perms", events[1].Event)
+	}
+	if acc, _ := events[1].raw["accessibility"].(string); acc != "ok" {
+		t.Errorf("accessibility = %q, want ok", acc)
+	}
+	if scr, _ := events[1].raw["screen"].(string); scr != "missing" {
+		t.Errorf("screen = %q, want missing", scr)
+	}
+	if len(be.Calls) != 0 {
+		t.Errorf("backend calls = %v, want none (request_perms bypasses the engine)", be.Calls)
+	}
+}
+
+// (j) a --request-perms request against a Session with no RequestPerms
+// callback wired (nil, e.g. the windows bridge, which never receives this
+// message) gets a defensive abort instead of a panic.
+func TestHandleRequestPermsNilCallbackAborts(t *testing.T) {
+	be := &dryrun.Backend{}
+	sess := &bridge.Session{Backend: be} // RequestPerms left nil.
+
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		sess.Handle(context.Background(), server)
+		close(done)
+	}()
+	go func() {
+		if _, err := client.Write(append(bridge.EncodeRequestPerms(), '\n')); err != nil {
+			t.Logf("write request_perms: %v", err)
+		}
+	}()
+
+	events := readEvents(t, client)
+	<-done
+
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want 2 (start, abort)", events)
+	}
+	if events[1].Event != "abort" {
+		t.Fatalf("events[1].Event = %q, want abort", events[1].Event)
+	}
+	if code, _ := events[1].raw["code"].(string); code != "E_VALIDATE" {
+		t.Errorf("abort code = %q, want E_VALIDATE", code)
+	}
 }

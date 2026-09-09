@@ -214,6 +214,29 @@ func WriteAbortEvent(w io.Writer, jsonl bool, code ErrorCode, msg string) error 
 	})
 }
 
+// WritePermsEvent writes the --request-perms terminal JSONL event
+// (help.txt JSONL "--request-perms" :617-619, help-remote.txt SESSION
+// BRIDGE :122-129): {"event":"perms","accessibility":"ok|missing",
+// "screen":"ok|missing"}. JSONL-only, mirroring WriteAbortEvent's shape -
+// --request-perms has no plain-mode object to format here; the "perms=..."
+// plain line is built directly by its callers (cmd/gotto-hando's
+// writePermsResult). Reused by internal/bridge/session.go's request-perms
+// branch and by cmd/gotto-hando/dispatch_darwin.go's requestPerms.
+func WritePermsEvent(w io.Writer, accessibility, screen bool) error {
+	return writeJSONObject(w, []KV{
+		{"event", "perms"},
+		{"accessibility", okMissing(accessibility)},
+		{"screen", okMissing(screen)},
+	})
+}
+
+func okMissing(ok bool) string {
+	if ok {
+		return "ok"
+	}
+	return "missing"
+}
+
 // DefaultOutDir computes the capture directory string (OUTPUT "Capture
 // paths", help.txt:588-590): --out, else $GOTTO_HANDO_OUT, else
 // $TMPDIR/gotto-hando/<dest>/<run-id>/. This is pure string construction;

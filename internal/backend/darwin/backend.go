@@ -67,6 +67,30 @@ func New() (*Backend, error) {
 	return be, nil
 }
 
+// NewBridge returns a Backend for `gotto-hando --bridge`
+// (260908-feat-remote-ssh Phase 2): identical to New() except session is
+// bridgeSessionProbe{} instead of the real CGSessionCopyCurrentDictionary
+// probe - the bridge process IS the interactive GUI session, so qinfo
+// answered through it always reports session=bridge. Every other probe
+// stays real: the bridge genuinely can query TCC grants, physical key/
+// button state and display geometry.
+func NewBridge() (*Backend, error) {
+	if err := initFFI(); err != nil {
+		return nil, err
+	}
+	be := &Backend{
+		session:      bridgeSessionProbe{},
+		perm:         realPermissionProbe{},
+		keys:         realKeyStateProbe{},
+		secure:       realSecureInputProbe{},
+		displays:     realDisplayProbe{},
+		clickState:   map[string]int{},
+		lastButtonUp: map[string]time.Time{},
+	}
+	be.evtSource = cgEventSourceCreate(cgEventSourceStateHIDSystemState)
+	return be, nil
+}
+
 var _ backend.Backend = (*Backend)(nil)
 
 // Info answers qinfo (help.txt:431-434, help-macos.txt CHECK example

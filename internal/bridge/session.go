@@ -26,6 +26,14 @@ type Session struct {
 	// text, no image data (help-remote.txt SESSION BRIDGE "Log:" clause).
 	// nil is a no-op.
 	Log func(string)
+	// RequestPerms implements --request-perms over the bridge
+	// (help-remote.txt SESSION BRIDGE :122-129, help-macos.txt GRANTING
+	// PERMISSIONS PROCEDURE step 2): called in the bridge's own GUI session
+	// so the system permission prompts appear there. nil-safe like Log - a
+	// bridge with no RequestPerms wired (there is currently no windows
+	// equivalent; its bridge never receives this message) answers a
+	// request_perms request with an abort instead of panicking.
+	RequestPerms func() (accessibility, screen bool, err error)
 
 	mu sync.Mutex
 }
@@ -58,7 +66,7 @@ func (s *Session) Handle(ctx context.Context, conn io.ReadWriteCloser) {
 		return
 	}
 
-	seq, env, err := decodeRequest(line)
+	seq, env, reqPerms, err := decodeRequest(line)
 	if err != nil {
 		s.logf("decode request: %v", err)
 		fmt.Fprintf(conn, "malformed request: %v\n", err)
@@ -80,11 +88,24 @@ func (s *Session) Handle(ctx context.Context, conn io.ReadWriteCloser) {
 		return
 	}
 
+	if reqPerms {
+		s.handleRequestPerms(conn)
+		return
+	}
+
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	opt := engine.RunOptions{
 		KeepGoing:  env.KeepGoing,
 		CapOnError: env.CapOnError,
+		// InlineCaptures is unconditionally true here: the bridge writes
+		// nothing else to disk (help-remote.txt SESSION BRIDGE :135), so a
+		// cap op must always come back as inline base64 data over the wire
+		// rather than a file written into the bridge process's own working
+		// directory. Without this, internal/engine/capture.go's
+		// !st.inlineCaptures branch calls WriteCaptureFile with
+		// CapturePath("", ...) - a stray on-disk write this fixes.
+		InlineCaptures: true,
 		// jsonl is always true and quiet always false here: JSONL is never
 		// quiet-filtered (help.txt JSONL section) and this connection only
 		// ever speaks JSONL. A write failure means the caller disconnected
@@ -111,6 +132,32 @@ func (s *Session) Handle(ctx context.Context, conn io.ReadWriteCloser) {
 	}
 	s.logf("run done: ok=%d err=%d skip=%d held_released=%d",
 		sum.Done.OK, sum.Done.Err, sum.Done.Skip, sum.Done.HeldReleased)
+}
+
+// handleRequestPerms serves a --request-perms request (help-remote.txt
+// SESSION BRIDGE :122-129): calls s.RequestPerms in the bridge's own GUI
+// session (so the system permission prompts appear there) and writes the
+// perms object, or an abort when the callback errors or is not wired.
+// conn's "start" object has already been written by Handle before this is
+// called.
+func (s *Session) handleRequestPerms(conn io.ReadWriteCloser) {
+	if s.RequestPerms == nil {
+		msg := "request_perms not supported by this bridge"
+		_ = output.WriteAbortEvent(conn, true, output.EValidate, msg)
+		s.logf("abort request_perms: %s", msg)
+		return
+	}
+	acc, scr, err := s.RequestPerms()
+	if err != nil {
+		_ = output.WriteAbortEvent(conn, true, output.EValidate, err.Error())
+		s.logf("request_perms error: %v", err)
+		return
+	}
+	if err := output.WritePermsEvent(conn, acc, scr); err != nil {
+		s.logf("write perms: %v (caller likely disconnected)", err)
+		return
+	}
+	s.logf("request_perms done: accessibility=%v screen=%v", acc, scr)
 }
 
 func (s *Session) logf(format string, args ...any) {

@@ -58,6 +58,17 @@ type realSessionProbe struct{}
 
 func (realSessionProbe) State() string { return sessionState() }
 
+// bridgeSessionProbe backs a Backend built by NewBridge() (backend.go):
+// the bridge process (`gotto-hando --bridge`) genuinely runs inside the
+// GUI session, so qinfo answered through it always reports session=bridge
+// regardless of the actual CGSessionCopyCurrentDictionary probe result -
+// which is why NewBridge() only swaps this one probe and keeps every other
+// real probe (the bridge process really can query TCC grants, physical
+// key/button state and display geometry).
+type bridgeSessionProbe struct{}
+
+func (bridgeSessionProbe) State() string { return "bridge" }
+
 // realPermissionProbe backs permissionProbe with AXIsProcessTrusted /
 // CGPreflightScreenCaptureAccess.
 type realPermissionProbe struct{}
