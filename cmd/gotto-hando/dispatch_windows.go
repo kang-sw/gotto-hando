@@ -5,7 +5,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,7 +16,6 @@ import (
 	"github.com/kang-sw/gotto-hando/internal/backend"
 	winbackend "github.com/kang-sw/gotto-hando/internal/backend/windows"
 	"github.com/kang-sw/gotto-hando/internal/bridge"
-	"github.com/kang-sw/gotto-hando/internal/engine"
 	"github.com/kang-sw/gotto-hando/internal/ir"
 	"github.com/kang-sw/gotto-hando/internal/output"
 	"github.com/kang-sw/gotto-hando/internal/syntax"
@@ -229,83 +227,8 @@ func forwardToBridge(opts parsedOptions, seq *ir.Sequence, stdout, stderr io.Wri
 	}
 }
 
-// decodeAbortEvent reports whether line is a bridge "abort" event
-// (internal/output.WriteAbortEvent's jsonl shape) and, if so, its code/msg.
-func decodeAbortEvent(line []byte) (code output.ErrorCode, msg string, ok bool) {
-	var v struct {
-		Event string `json:"event"`
-		Code  string `json:"code"`
-		Msg   string `json:"msg"`
-	}
-	if json.Unmarshal(line, &v) != nil || v.Event != "abort" {
-		return "", "", false
-	}
-	return output.ErrorCode(v.Code), v.Msg, true
-}
-
-// wireDone is the bridge "done" event's decoded shape (internal/output.
-// WriteDone's jsonl fields).
-type wireDone struct {
-	Event        string `json:"event"`
-	OK           int    `json:"ok"`
-	Err          int    `json:"err"`
-	Skip         int    `json:"skip"`
-	ElapsedMS    int64  `json:"elapsed_ms"`
-	HeldReleased int    `json:"held_released"`
-	State        string `json:"state"`
-}
-
-func decodeDoneEvent(line []byte) (wireDone, bool) {
-	var d wireDone
-	if json.Unmarshal(line, &d) != nil || d.Event != "done" {
-		return wireDone{}, false
-	}
-	return d, true
-}
-
-// relayResult prints one bridge per-line result event to stdout in
-// whichever form the caller asked for. --jsonl forwards the line
-// byte-for-byte (the bridge's own writer, internal/output.WriteResult, is
-// the exact function the local run path already uses, so the wire shape
-// is already identical); plain mode decodes it and rebuilds Detail/Extra
-// via engine.ResultDetailFromJSON.
-func relayResult(opts parsedOptions, stdout io.Writer, line []byte) error {
-	if opts.JSONL {
-		_, err := stdout.Write(append(append([]byte(nil), line...), '\n'))
-		return err
-	}
-	var w struct {
-		Line   int    `json:"line"`
-		Status string `json:"status"`
-		Cmd    string `json:"cmd"`
-		Src    string `json:"src"`
-		Code   string `json:"code"`
-		Msg    string `json:"msg"`
-	}
-	if err := json.Unmarshal(line, &w); err != nil {
-		return nil
-	}
-	res := output.Result{Line: w.Line, Status: w.Status, Cmd: w.Cmd, Src: w.Src, ErrMsg: w.Msg, ErrCode: output.ErrorCode(w.Code)}
-	if w.Status != "err" {
-		var fields map[string]json.RawMessage
-		if json.Unmarshal(line, &fields) == nil {
-			if detail, extra, alwaysShow, ok := engine.ResultDetailFromJSON(w.Cmd, fields); ok {
-				res.Detail, res.Extra, res.AlwaysShow = detail, extra, alwaysShow
-			}
-		}
-	}
-	return output.WriteResult(stdout, false, opts.Quiet, res)
-}
-
-// relayDone prints the bridge's "done" event to stdout - verbatim in
-// --jsonl mode, reformatted via output.WriteDone in plain mode.
-func relayDone(opts parsedOptions, stdout io.Writer, line []byte, d wireDone) error {
-	if opts.JSONL {
-		_, err := stdout.Write(append(append([]byte(nil), line...), '\n'))
-		return err
-	}
-	return output.WriteDone(stdout, false, output.Done{
-		OK: d.OK, Err: d.Err, Skip: d.Skip, ElapsedMS: d.ElapsedMS,
-		HeldReleased: d.HeldReleased, StateUnknown: d.State == "unknown",
-	})
-}
+// decodeAbortEvent/wireDone/decodeDoneEvent/relayResult/relayDone moved to
+// bridge_relay.go (260908-feat-remote-ssh Phase 2): darwin's own
+// forwardToBridge/requestPerms now need the identical wire-decode/relay
+// logic, so these are shared from a build-tag-free file instead of
+// duplicated per GOOS.
