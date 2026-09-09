@@ -1,6 +1,8 @@
 ---
 title: "rclip: load a file on the target machine into its clipboard"
 parent: 260907-epic-gotto-hando-v1
+plans:
+  phase-1: 2026-09/09-2055-260908-feat-rclip-phase1
 related:
   260907-feat-cli-core: prerequisite
   260907-feat-darwin-backend: prerequisite
