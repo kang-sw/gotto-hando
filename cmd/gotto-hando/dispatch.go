@@ -177,11 +177,27 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				_ = output.WriteAbortEvent(stdout, true, output.EValidate, err.Error())
 				return output.AbortExit(output.EValidate)
 			}
-			sum := engine.Run(context.Background(), be, seq, engine.RunOptions{
+			// A cancelable ctx, cancelled the moment a result write to stdout
+			// fails (broken pipe / EOF on the far side) - mirrors
+			// internal/bridge/session.go's identical pattern exactly (Phase
+			// 0). This is what makes stdout EOF mid-run on the ssh-spawned
+			// remote (this exact `local --jsonl` path) stop the engine
+			// promptly instead of blindly finishing every remaining op on a
+			// dead connection: engine.Run's per-op ctx.Err() check skips
+			// the rest as "skip", and its unconditional end-of-run
+			// releaseAll still releases held keys/buttons either way
+			// (260908-feat-remote-ssh Phase 1 review T3). Plain mode is
+			// untouched - it has no per-result write to fail against until
+			// the whole run has already finished.
+			runCtx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			sum := engine.Run(runCtx, be, seq, engine.RunOptions{
 				KeepGoing: opts.KeepGoing, CapOnError: opts.CapOnError,
 				OutDir: outDir, InlineCaptures: opts.InlineCaptures,
 				OnResult: func(r output.Result) {
-					_ = output.WriteResult(stdout, true, opts.Quiet, r)
+					if werr := output.WriteResult(stdout, true, opts.Quiet, r); werr != nil {
+						cancel()
+					}
 				},
 			})
 			if sum.Aborted {

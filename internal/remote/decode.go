@@ -3,13 +3,25 @@ package remote
 import "encoding/json"
 
 // StartEvent is the remote process's own JSONL "start" object
-// (help.txt JSONL :596-597). The wrapper only uses it to confirm the
-// remote is alive - it always prints its OWN start object (local dest/out)
-// instead of relaying this one (help-remote.txt HOW IT WORKS step 4).
+// (help.txt JSONL :596-597). The wrapper uses it to confirm the remote is
+// alive and prints its OWN out/dest (help-remote.txt HOW IT WORKS step 4
+// permits rewriting only out/dest/capture-paths/err-src) - but Target.OS
+// is relayed AS-IS from this event, not regenerated from the local
+// process's own runtime.GOOS: target.os is not one of the permitted
+// rewrites, and for the feature's primary cross-OS use case (e.g. macOS
+// driving a Windows box) the two genuinely differ (review I1).
 type StartEvent struct {
-	Event string `json:"event"`
-	Out   string `json:"out"`
-	Dest  string `json:"dest"`
+	Event  string     `json:"event"`
+	Out    string     `json:"out"`
+	Dest   string     `json:"dest"`
+	Target TargetInfo `json:"target"`
+}
+
+// TargetInfo is the "start" event's nested "target" object (help.txt
+// JSONL :596-597), mirroring internal/output's own private targetInfo
+// shape so DecodeStart can round-trip the remote's real OS.
+type TargetInfo struct {
+	OS string `json:"os"`
 }
 
 // DecodeStart reports whether line is a "start" event.

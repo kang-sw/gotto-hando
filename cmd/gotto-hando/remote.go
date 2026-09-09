@@ -83,17 +83,20 @@ func startSSH(ctx context.Context, args []string, stdin io.Reader, stderr io.Wri
 	return cmd, sc, nil
 }
 
-// waitForStart reads and discards lines until it sees a "start" event
-// (help-remote.txt HOW IT WORKS step 4: "wait for the start object; until
-// then any failure - ssh, binary not found, usage error or version
-// mismatch from the remote binary - is exit 3 and nothing ran"). ok is
-// false on EOF or a non-start first line.
-func waitForStart(scanner *bufio.Scanner) bool {
+// waitForStart reads the remote's first stdout line and reports whether it
+// is a "start" event (help-remote.txt HOW IT WORKS step 4: "wait for the
+// start object; until then any failure - ssh, binary not found, usage
+// error or version mismatch from the remote binary - is exit 3 and
+// nothing ran"). It does a single Scan, not a discard loop: the remote
+// always emits "start" as its very first stdout line, so any other first
+// line (or EOF) is itself the failure. ok is false on EOF or a non-start
+// first line; the decoded event (including the remote's real target.os,
+// review I1) is only meaningful when ok is true.
+func waitForStart(scanner *bufio.Scanner) (remote.StartEvent, bool) {
 	if !scanner.Scan() {
-		return false
+		return remote.StartEvent{}, false
 	}
-	_, ok := remote.DecodeStart(scanner.Bytes())
-	return ok
+	return remote.DecodeStart(scanner.Bytes())
 }
 
 // runRemote implements the <dest> ssh wrapper (help-remote.txt HOW IT
@@ -121,7 +124,8 @@ func runRemote(opts parsedOptions, seq *ir.Sequence, lines []string, stdout, std
 		return abort(output.EConnect, "ssh spawn failed: "+err.Error())
 	}
 
-	if !waitForStart(scanner) {
+	startEvt, started := waitForStart(scanner)
+	if !started {
 		_ = cmd.Wait()
 		return abort(output.EConnect, "remote process ended before its start line")
 	}
@@ -135,8 +139,19 @@ func runRemote(opts parsedOptions, seq *ir.Sequence, lines []string, stdout, std
 
 	localStart := time.Now()
 	var ok, errN, skip int
+	// stateUnknown is the ERROR POLICY "Connection loss" path: the
+	// channel dropped with no done/abort received, whether that happens
+	// right after start (no results streamed yet) or mid-run (some
+	// results already relayed) - both print the wrapper's own start
+	// (using the remote's real target.os, review I1) followed by a
+	// synthesized done with state=unknown, exit 5. Never routes through
+	// abort(): exit 3 (E_CONNECT) is reserved for failures BEFORE the
+	// start object arrives (help-remote.txt HOW IT WORKS step 4), and a
+	// dropped connection after start is a categorically different, and
+	// differently-exit-coded, outcome (review C1).
 	stateUnknown := func() int {
 		_ = cmd.Wait()
+		_ = output.WriteStartOS(stdout, opts.JSONL, opts.Dest, outDir, startEvt.Target.OS)
 		_ = output.WriteDone(stdout, opts.JSONL, remote.SynthesizeDone(ok, errN, skip, localStart))
 		return output.ExitStateUnknown
 	}
@@ -152,8 +167,15 @@ func runRemote(opts parsedOptions, seq *ir.Sequence, lines []string, stdout, std
 	// start ever reaching stdout. Only once this first line is confirmed
 	// NOT an abort does the wrapper commit to printing its own start and
 	// begin streaming.
+	//
+	// A post-start EOF (scanner.Scan returning false right here, before
+	// any content line arrives) is NOT an abort - it is the connection-
+	// loss case above (review C1): the start object WAS seen, so exit 3
+	// ("before its start line") would be factually wrong. stateUnknown
+	// covers this identically to the mid-run case (ok/errN/skip are all
+	// still zero at this point).
 	if !scanner.Scan() {
-		return abort(output.EConnect, "remote process ended before its start line")
+		return stateUnknown()
 	}
 	first := append([]byte(nil), scanner.Bytes()...)
 	if a, isAbort := remote.DecodeAbort(first); isAbort {
@@ -161,7 +183,7 @@ func runRemote(opts parsedOptions, seq *ir.Sequence, lines []string, stdout, std
 		return abort(output.ErrorCode(a.Code), a.Msg)
 	}
 
-	_ = output.WriteStart(stdout, opts.JSONL, opts.Dest, outDir)
+	_ = output.WriteStartOS(stdout, opts.JSONL, opts.Dest, outDir, startEvt.Target.OS)
 
 	line := first
 	for {
@@ -225,7 +247,8 @@ func runRemoteRequestPerms(opts parsedOptions, stdout, stderr io.Writer, abort f
 		return abort(output.EConnect, "ssh spawn failed: "+err.Error())
 	}
 
-	if !waitForStart(scanner) {
+	startEvt, started := waitForStart(scanner)
+	if !started {
 		_ = cmd.Wait()
 		return abort(output.EConnect, "remote process ended before its start line")
 	}
@@ -238,7 +261,7 @@ func runRemoteRequestPerms(opts parsedOptions, stdout, stderr io.Writer, abort f
 	// let this wrapper's own local start reach stdout in plain mode.
 	if !scanner.Scan() {
 		_ = cmd.Wait()
-		_ = output.WriteStart(stdout, opts.JSONL, opts.Dest, outDir)
+		_ = output.WriteStartOS(stdout, opts.JSONL, opts.Dest, outDir, startEvt.Target.OS)
 		_ = output.WriteDone(stdout, opts.JSONL, remote.SynthesizeDone(0, 0, 0, time.Now()))
 		return output.ExitStateUnknown
 	}
@@ -249,7 +272,7 @@ func runRemoteRequestPerms(opts parsedOptions, stdout, stderr io.Writer, abort f
 		return abort(output.ErrorCode(a.Code), a.Msg)
 	}
 
-	_ = output.WriteStart(stdout, opts.JSONL, opts.Dest, outDir)
+	_ = output.WriteStartOS(stdout, opts.JSONL, opts.Dest, outDir, startEvt.Target.OS)
 
 	if p, isPerms := remote.DecodePerms(line); isPerms {
 		_ = cmd.Wait()
