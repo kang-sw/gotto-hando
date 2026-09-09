@@ -51,6 +51,40 @@ func decodeDoneEvent(line []byte) (wireDone, bool) {
 	return d, true
 }
 
+// resultCounts returns a bridge result's contribution to the forwarder's
+// post-start connection-loss summary. It intentionally ignores malformed or
+// non-result frames, which relayResult preserves under the existing contract.
+//
+// The engine's end-of-run held-key/button cleanup writes auxiliary warn
+// frames with cmd kd or md. Those frames are visible output, but they do not
+// increment engine.Summary.OK (only their originating operation does), so
+// they must not inflate a synthesized unknown-state done total. Ordinary
+// primary warnings, currently win with multiple matches, still count as OK.
+func resultCounts(line []byte) (ok, errN, skip int) {
+	var event struct {
+		Status string `json:"status"`
+		Cmd    string `json:"cmd"`
+	}
+	if json.Unmarshal(line, &event) != nil {
+		return 0, 0, 0
+	}
+	switch event.Status {
+	case "ok":
+		return 1, 0, 0
+	case "err":
+		return 0, 1, 0
+	case "skip":
+		return 0, 0, 1
+	case "warn":
+		if event.Cmd == "kd" || event.Cmd == "md" {
+			return 0, 0, 0
+		}
+		return 1, 0, 0
+	default:
+		return 0, 0, 0
+	}
+}
+
 // relayResult prints one bridge per-line result event to stdout in
 // whichever form the caller asked for. --jsonl forwards the line
 // byte-for-byte (the bridge's own writer, internal/output.WriteResult, is
