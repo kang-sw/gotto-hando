@@ -1,8 +1,14 @@
 // Package dryrun is a test-only Backend that records every call in order
 // and returns canned results (plan Phase 2 step 7). It is NEVER selectable
-// from the CLI and is never bound to `local`: cmd/gotto-hando does not
-// import it. Only internal/engine and its tests do, to exercise the engine
-// against the Backend contract (fail-fast, -k, held release, done counts).
+// from a release build and is never bound to `local` there: cmd/gotto-hando
+// does not import it under a normal build. Only internal/engine and its
+// tests do, to exercise the engine against the Backend contract (fail-fast,
+// -k, held release, done counts) - with one deliberate exception: under the
+// `dryrun` build tag (260908-feat-remote-ssh Phase 1's own fake-ssh
+// integration test harness, cmd/gotto-hando/dispatch_dryrun.go, never
+// selectable in a release build) `local` DOES bind to this Backend, so the
+// harness can drive the real CLI/engine/remote-wrapper wiring without
+// linking real OS backend/syscall code.
 package dryrun
 
 import (

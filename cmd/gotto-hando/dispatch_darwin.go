@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && !dryrun
 
 package main
 
@@ -23,12 +23,11 @@ func newLocalBackend() (backend.Backend, error) {
 // --request-perms :91-108, help-macos.txt GRANTING PERMISSIONS): a process
 // in the GUI session calls AXIsProcessTrustedWithOptions(prompt=true) and
 // CGRequestScreenCaptureAccess() so macOS shows its prompts, then prints
-// one perms= line and exits 0 when both are ok, else 4. A non-local dest
-// would be the bridge's job (260908-feat-remote-ssh, not wired here).
+// one perms= line and exits 0 when both are ok, else 4. dispatch.go only
+// ever calls this with opts.Dest == "local" - a non-local dest routes to
+// cmd/gotto-hando/remote.go's runRemoteRequestPerms before requestPerms is
+// ever reached (260908-feat-remote-ssh Phase 1).
 func requestPerms(opts parsedOptions, stdout, stderr io.Writer, abort func(output.ErrorCode, string) int) int {
-	if opts.Dest != "local" {
-		return abort(output.EValidate, "remote destinations not implemented")
-	}
 	acc, scr, err := darwin.RequestPerms()
 	if err != nil {
 		return abort(output.EValidate, err.Error())

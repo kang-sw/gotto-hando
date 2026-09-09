@@ -86,9 +86,9 @@ func TestCapturePathAutomaticAndExplicit(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := capturePath(c.out, c.explicit, c.label, ts, c.seq, c.index, c.n)
+			got := CapturePath(c.out, c.explicit, c.label, ts, c.seq, c.index, c.n)
 			if got != c.want {
-				t.Fatalf("capturePath = %q, want %q", got, c.want)
+				t.Fatalf("CapturePath = %q, want %q", got, c.want)
 			}
 		})
 	}

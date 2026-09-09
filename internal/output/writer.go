@@ -148,17 +148,34 @@ type targetInfo struct {
 }
 
 // WriteStart writes the OUTPUT "First line" (plain, help.txt:562) or the
-// JSONL "start" event (help.txt:596-597). Exported so cmd/gotto-hando's
-// local-run path (the first non-abort caller) can print it; WriteAbort
-// still calls it internally for the abort case.
+// JSONL "start" event (help.txt:596-597) for a run against THIS process's
+// own runtime (target.os = runtime.GOOS): the direct local-run path and
+// the bridge-forward path, where the target genuinely is this host (or,
+// for forwardToBridge, is documented as a local-only placeholder). Exported
+// so cmd/gotto-hando's local-run path (the first non-abort caller) can
+// print it; WriteAbort still calls it internally for the abort case.
+//
+// The <dest> ssh wrapper (cmd/gotto-hando/remote.go) must NOT use this:
+// its target is the REMOTE machine, not this process's own GOOS - it
+// calls WriteStartOS with the remote's relayed target.os instead
+// (review I1).
 func WriteStart(w io.Writer, jsonl bool, dest, outDir string) error {
+	return WriteStartOS(w, jsonl, dest, outDir, runtime.GOOS)
+}
+
+// WriteStartOS is WriteStart with an explicit target OS instead of always
+// this process's own runtime.GOOS - the general form the ssh wrapper needs
+// to relay a remote's real target.os (help-remote.txt HOW IT WORKS step 4
+// permits rewriting only out/dest/capture-paths/err-src; target.os is
+// relayed as the remote reported it).
+func WriteStartOS(w io.Writer, jsonl bool, dest, outDir, targetOS string) error {
 	if !jsonl {
 		_, err := fmt.Fprintf(w, "out %s\n", outDir)
 		return err
 	}
 	return writeJSONObject(w, []KV{
 		{"event", "start"}, {"out", outDir}, {"dest", dest},
-		{"target", targetInfo{OS: runtime.GOOS}},
+		{"target", targetInfo{OS: targetOS}},
 	})
 }
 
