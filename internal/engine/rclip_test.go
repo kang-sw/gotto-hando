@@ -1,7 +1,10 @@
 package engine_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -9,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kang-sw/gotto-hando/internal/backend/dryrun"
 	"github.com/kang-sw/gotto-hando/internal/engine"
@@ -59,5 +63,57 @@ func TestRClipInvalidTextIsClipboardFailureAndKeepGoing(t *testing.T) {
 	sum := engine.Run(context.Background(), be, parse(t, "rclip[]"+path, "k[]a"), engine.RunOptions{KeepGoing: true})
 	if len(sum.Results) != 2 || sum.Results[0].ErrCode != output.EClipboard || sum.Results[1].Status != "ok" {
 		t.Fatalf("results = %+v", sum.Results)
+	}
+}
+
+func TestRClipClipboardFailureMapsAndControlsContinuation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "note.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, keepGoing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("keep=%v", keepGoing), func(t *testing.T) {
+			be := &dryrun.Backend{FailOn: func(call string) error {
+				if strings.HasPrefix(call, "ClipboardSet ") {
+					return errors.New("clipboard failed")
+				}
+				return nil
+			}}
+			sum := engine.Run(context.Background(), be, parse(t, "rclip[txt]"+path, "k[]a"), engine.RunOptions{KeepGoing: keepGoing})
+			if sum.Results[0].ErrCode != output.EClipboard {
+				t.Fatalf("first result = %+v", sum.Results[0])
+			}
+			want := "skip"
+			if keepGoing {
+				want = "ok"
+			}
+			if sum.Results[1].Status != want {
+				t.Fatalf("second result = %+v, want %s", sum.Results[1], want)
+			}
+		})
+	}
+}
+
+func TestRClipLineDelayOverrideAndRenderedOutput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "note.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	seq := parse(t, "rclip[d=1ms]"+path)
+	seq.Defaults.DelayMS = 25
+	start := time.Now()
+	sum := engine.Run(context.Background(), &dryrun.Backend{}, seq, engine.RunOptions{})
+	if elapsed := time.Since(start); elapsed > 20*time.Millisecond {
+		t.Fatalf("line d= override ignored: %s", elapsed)
+	}
+	var plain, jsonl bytes.Buffer
+	if err := output.WriteResult(&plain, false, false, sum.Results[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.WriteResult(&jsonl, true, false, sum.Results[0]); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plain.String(), "type=text bytes=5") || !strings.Contains(jsonl.String(), `"type":"text"`) || !strings.Contains(jsonl.String(), `"bytes":5`) {
+		t.Fatalf("plain=%q json=%q", plain.String(), jsonl.String())
 	}
 }
