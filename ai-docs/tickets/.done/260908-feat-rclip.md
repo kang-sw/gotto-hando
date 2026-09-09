@@ -12,6 +12,7 @@ sage-review-design: completed
 sage-review-completeness: completed
 sage-review-design-reviewed: 946a80f56420f3af
 sage-review-completeness-reviewed: 946a80f56420f3af
+completed: 2026-09-09
 ---
 
 # rclip: load a file on the target machine into its clipboard
@@ -92,3 +93,42 @@ run `rclip[]./x.png` followed by `qclip` (text absent -> documented result)
 and a paste into Preview/Paint that shows the image; a `<dest>` run whose
 path is on the remote machine; E_CLIPBOARD for a missing file with the run
 continuing under `-k`.
+
+### Result (9a38b02) - 2026-09-09
+
+Implemented target-side text/image clipboard loading on macOS and Windows.
+The source implementation and review fixes span `3d1f809..4cfd017`; additional
+runtime, bridge, and delay tests landed through `947fd37`.
+
+- Paths survive parser/IR, SSH rewriting, and bridge decoding without `[f]`
+  inlining. Plain and JSONL results preserve the source byte count, content
+  type, and image dimensions, including relayed results.
+- Added `golang.org/x/image v0.45.0` for the promised BMP/TIFF support.
+  Runtime loading is restricted to regular files, with 64 MiB source and
+  64 MiPixel decode limits. Platform open helpers retain portable CLI builds.
+- Review corrected missing wire-result detail reconstruction, autoreleased
+  Darwin image buffers, blocking special-file reads, incomplete normative
+  help, and an opener build-tag regression. All Critical findings were
+  independently resolved; final Critical-scoped review was clean.
+- Host verification passed: full race suite, dryrun CLI tests, native and
+  Windows builds, Windows test compilation, vet, formatting, and diff checks.
+  Follow-up tests verify advertised codecs and overrides, loader failures,
+  backend failure mapping, fail-fast/`-k`, global and per-line delay, rendered
+  results, remote path round trips, and bridge-session target execution.
+  Portability checks cover FreeBSD plus representative other Unix and
+  fallback targets (OpenBSD, NetBSD, Solaris, Plan 9, and js/wasm).
+- Native macOS smoke published a 1024x1024 image as PNG and TIFF. Preview paste
+  was attempted but not visually confirmed; real Windows GUI/WDAC acceptance
+  remains deferred. Native publication/allocation failure branches lack a
+  non-intrusive test seam and remain unverified; DIB conversion and owned-data
+  selector tests provide narrower coverage. No production test architecture
+  was added solely to simulate those native failures.
+
+The existing pointer specs cover the updated normative help sections; no new
+spec anchor was required. Implementation is complete, with the above manual
+acceptance and native failure-injection limits explicitly retained.
+
+
+## Resolution (2026-09-09)
+
+Phase 1 implemented and reviewed. Host verification is complete; live Windows GUI/WDAC acceptance, visually confirmed Preview paste, and native failure-injection coverage remain explicitly documented verification limits.
