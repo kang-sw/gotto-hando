@@ -201,6 +201,39 @@ func TestRequestPermsPhase2(t *testing.T) {
 	}
 }
 
+// TestRequestPermsJSONLEmitsStartPermsPair covers `local --request-perms
+// --jsonl` on darwin (260908-feat-remote-ssh Phase 2 Codebase Findings
+// "missed contract"): the JSONL start+perms pair help.txt JSONL
+// "--request-perms" (:617-619) documents, not just the plain perms= line
+// TestRequestPermsPhase2 already covers. This is what makes `<dest>
+// --request-perms` work end to end at all - remote.go's
+// runRemoteRequestPerms decodes exactly this shape via
+// internal/remote.DecodePerms when relaying a `<dest> --request-perms`
+// run, so a remote `local --request-perms --jsonl` invocation that never
+// printed it would leave the wrapper hanging on a bogus "done" fallback.
+func TestRequestPermsJSONLEmitsStartPermsPair(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("local --request-perms needs the darwin backend")
+	}
+	out, errOut, code := runBin(t, "", "local", "--request-perms", "--jsonl")
+	if code != 0 && code != 4 {
+		t.Fatalf("exit = %d, want 0 or 4 (stderr=%q)", code, errOut)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("stdout lines = %v, want exactly 2 (start, perms)", lines)
+	}
+	if !strings.Contains(lines[0], `"event":"start"`) {
+		t.Errorf("first line = %q, want a start event", lines[0])
+	}
+	if !strings.Contains(lines[1], `"event":"perms"`) {
+		t.Errorf("second line = %q, want a perms event", lines[1])
+	}
+	if !strings.Contains(lines[1], `"accessibility"`) || !strings.Contains(lines[1], `"screen"`) {
+		t.Errorf("perms line = %q, want accessibility and screen fields", lines[1])
+	}
+}
+
 // TestInlineCapturesAcceptedPhase2 confirms --inline-captures is accepted
 // (Phase 2) rather than an exit-2 usage error: a query-only run with the
 // flag completes normally (help.txt --inline-captures :72-77, "Also
@@ -216,19 +249,29 @@ func TestInlineCapturesAcceptedPhase2(t *testing.T) {
 }
 
 // TestNotImplementedOptionsExitTwo covers the still-not-implemented options
-// (--bridge on this GOOS, `local --remote-bin`), each asserting exit 2 with
-// its exact stderr message. --check/--ir are implemented (Phase 2) and
-// covered by analyze_test.go; the local-dest path is covered by
-// TestLocalDestDispatch below; --inline-captures/--request-perms are
-// implemented in Phase 2 and covered by the two tests above; the <dest>
-// ssh wrapper (260908-feat-remote-ssh Phase 1) is covered by remote_test.go.
+// (`local --remote-bin`), asserting exit 2 with its exact stderr message.
+// --check/--ir are implemented (Phase 2) and covered by analyze_test.go;
+// the local-dest path is covered by TestLocalDestDispatch below;
+// --inline-captures/--request-perms are implemented in Phase 2 and covered
+// by the two tests above; the <dest> ssh wrapper (260908-feat-remote-ssh
+// Phase 1) is covered by remote_test.go. --bridge is no longer here
+// (260908-feat-remote-ssh Phase 2): on darwin - this dev host's native
+// GOOS, so binPath (built with no tags, TestMain) always exercises it -
+// runBridge now really listens on the unix socket and blocks in its
+// Accept() loop until interrupted, so a bare `runBin(t, "", "--bridge")`
+// would hang this test rather than exit 2; darwin's real bridge machinery
+// is instead covered by internal/backend/darwin's bridge_socket_test.go
+// (ListenBridge/Accept/Close), internal/bridge's session_test.go
+// (Session.Handle), and dispatch_darwin_test.go
+// (forwardToBridge/requestPerms over the dialBridge seam) - the same depth
+// windows's own Phase 0 bridge got (dispatch_windows_test.go never
+// subprocess-drives the real blocking Accept() loop either).
 func TestNotImplementedOptionsExitTwo(t *testing.T) {
 	cases := []struct {
 		name string
 		args []string
 		want string
 	}{
-		{"bridge", []string{"--bridge"}, "abort: session bridge not implemented (E_VALIDATE)\n"},
 		{"remote-bin", []string{"local", "--remote-bin", "/opt/gotto-hando"}, "abort: --remote-bin not implemented (E_VALIDATE)\n"},
 	}
 	for _, c := range cases {
