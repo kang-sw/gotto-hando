@@ -170,6 +170,70 @@ func TestRemoteKillMidRun(t *testing.T) {
 	}
 }
 
+// TestRemoteKillMidRunJSONLSingleStart is the NEW-1 regression test: the
+// mid-run connection-loss path (results already relayed, so this
+// wrapper's own start object was already committed and printed) must
+// emit EXACTLY ONE {"event":"start"} object, never a second one. Relay
+// #1's C1 fix folded WriteStartOS into the same closure reused by both
+// this mid-run path and the pre-first-result-EOF path below, which
+// caused a duplicate start here; asserting a COUNT (not prefix/contains,
+// which TestRemoteKillMidRun above already does and which missed this)
+// is what catches a regression like it recurring.
+func TestRemoteKillMidRunJSONLSingleStart(t *testing.T) {
+	out, errOut, code := runBin(t, "", "--jsonl", "killmidrun", "qinfo")
+	if code != 5 {
+		t.Fatalf("exit = %d, want 5 (stderr=%q)", code, errOut)
+	}
+	if errOut != "" {
+		t.Fatalf("stderr = %q, want empty", errOut)
+	}
+	startCount := strings.Count(out, `"event":"start"`)
+	if startCount != 1 {
+		t.Fatalf("stdout has %d {\"event\":\"start\"} objects, want exactly 1: %q", startCount, out)
+	}
+	doneCount := strings.Count(out, `"event":"done"`)
+	if doneCount != 1 {
+		t.Errorf("stdout has %d {\"event\":\"done\"} objects, want exactly 1: %q", doneCount, out)
+	}
+	if !strings.Contains(out, `"state":"unknown"`) {
+		t.Errorf("stdout = %q, want the done object to carry state=unknown", out)
+	}
+}
+
+// TestRemoteKillBeforeResultJSONLSingleStart is NEW-1's companion case:
+// the connection-loss path BEFORE this wrapper has ever printed its own
+// start (fakessh's "killbeforeresult" - a start object with zero results,
+// then EOF) must still print exactly one start, synthesizing a done right
+// after it (mirroring runRemoteRequestPerms's own pre-result EOF branch).
+func TestRemoteKillBeforeResultJSONLSingleStart(t *testing.T) {
+	out, errOut, code := runBin(t, "", "--jsonl", "killbeforeresult", "qinfo")
+	if code != 5 {
+		t.Fatalf("exit = %d, want 5 (stderr=%q)", code, errOut)
+	}
+	if errOut != "" {
+		t.Fatalf("stderr = %q, want empty", errOut)
+	}
+	startCount := strings.Count(out, `"event":"start"`)
+	if startCount != 1 {
+		t.Fatalf("stdout has %d {\"event\":\"start\"} objects, want exactly 1: %q", startCount, out)
+	}
+	doneCount := strings.Count(out, `"event":"done"`)
+	if doneCount != 1 {
+		t.Errorf("stdout has %d {\"event\":\"done\"} objects, want exactly 1: %q", doneCount, out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("stdout lines = %d, want 2 (start, done): %q", len(lines), out)
+	}
+	var done struct {
+		Event string `json:"event"`
+		OK    int    `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &done); err != nil || done.Event != "done" || done.OK != 0 {
+		t.Fatalf("done line = %q (err=%v), want event=done ok=0 (no results ever arrived)", lines[1], err)
+	}
+}
+
 // TestRemoteRequestPermsAbort asserts --request-perms forwarded to a
 // non-macOS (here: the dryrun harness's fake remote, dispatch_dryrun.go)
 // remote aborts E_VALIDATE right after start, exit 2 - same abort-after-

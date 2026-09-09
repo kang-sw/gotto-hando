@@ -139,19 +139,27 @@ func runRemote(opts parsedOptions, seq *ir.Sequence, lines []string, stdout, std
 
 	localStart := time.Now()
 	var ok, errN, skip int
-	// stateUnknown is the ERROR POLICY "Connection loss" path: the
-	// channel dropped with no done/abort received, whether that happens
-	// right after start (no results streamed yet) or mid-run (some
-	// results already relayed) - both print the wrapper's own start
-	// (using the remote's real target.os, review I1) followed by a
-	// synthesized done with state=unknown, exit 5. Never routes through
+	// stateUnknownDone is the ERROR POLICY "Connection loss" path for
+	// every site AFTER this wrapper has already committed to printing
+	// its own start object (line 186 below): the channel dropped with
+	// no done/abort received, some results possibly already relayed.
+	// It prints ONLY a synthesized done with state=unknown, exit 5 - it
+	// must never re-print start, since that would emit a SECOND
+	// {"event":"start"} object and break the "exactly one start" byte-
+	// identity contract a genuine local run guarantees (review NEW-1,
+	// a regression introduced by relay #1's C1 fix, which mistakenly
+	// folded WriteStartOS into this same closure for both the pre- and
+	// post-start-committed cases). The pre-first-result EOF case below
+	// (scanner.Scan failing before line 186 ever runs) is handled
+	// inline instead, mirroring runRemoteRequestPerms's own pre-result
+	// EOF branch: start has not been printed yet there, so that one
+	// site alone prints start + done together. Never routes through
 	// abort(): exit 3 (E_CONNECT) is reserved for failures BEFORE the
 	// start object arrives (help-remote.txt HOW IT WORKS step 4), and a
 	// dropped connection after start is a categorically different, and
 	// differently-exit-coded, outcome (review C1).
-	stateUnknown := func() int {
+	stateUnknownDone := func() int {
 		_ = cmd.Wait()
-		_ = output.WriteStartOS(stdout, opts.JSONL, opts.Dest, outDir, startEvt.Target.OS)
 		_ = output.WriteDone(stdout, opts.JSONL, remote.SynthesizeDone(ok, errN, skip, localStart))
 		return output.ExitStateUnknown
 	}
@@ -171,11 +179,17 @@ func runRemote(opts parsedOptions, seq *ir.Sequence, lines []string, stdout, std
 	// A post-start EOF (scanner.Scan returning false right here, before
 	// any content line arrives) is NOT an abort - it is the connection-
 	// loss case above (review C1): the start object WAS seen, so exit 3
-	// ("before its start line") would be factually wrong. stateUnknown
-	// covers this identically to the mid-run case (ok/errN/skip are all
-	// still zero at this point).
+	// ("before its start line") would be factually wrong. This wrapper's
+	// own start has NOT been printed yet at this point (line 186 below
+	// is what commits to it), so - unlike stateUnknownDone's mid-run
+	// sites - this site alone must print start itself before the
+	// synthesized done (review NEW-1; mirrors runRemoteRequestPerms's
+	// own pre-result EOF branch, which does the same inline start+done).
 	if !scanner.Scan() {
-		return stateUnknown()
+		_ = cmd.Wait()
+		_ = output.WriteStartOS(stdout, opts.JSONL, opts.Dest, outDir, startEvt.Target.OS)
+		_ = output.WriteDone(stdout, opts.JSONL, remote.SynthesizeDone(ok, errN, skip, localStart))
+		return output.ExitStateUnknown
 	}
 	first := append([]byte(nil), scanner.Bytes()...)
 	if a, isAbort := remote.DecodeAbort(first); isAbort {
@@ -204,7 +218,7 @@ func runRemote(opts parsedOptions, seq *ir.Sequence, lines []string, stdout, std
 
 		res, rawForJSONL, perr := rl.Process(line)
 		if perr != nil {
-			return stateUnknown()
+			return stateUnknownDone()
 		}
 		switch res.Status {
 		case "err":
@@ -216,7 +230,7 @@ func runRemote(opts parsedOptions, seq *ir.Sequence, lines []string, stdout, std
 		}
 		if opts.JSONL && rawForJSONL != nil {
 			if _, werr := stdout.Write(append(rawForJSONL, '\n')); werr != nil {
-				return stateUnknown()
+				return stateUnknownDone()
 			}
 		} else {
 			_ = output.WriteResult(stdout, opts.JSONL, opts.Quiet, res)
@@ -226,7 +240,7 @@ func runRemote(opts parsedOptions, seq *ir.Sequence, lines []string, stdout, std
 			// scanner ended without a done after start: connection lost
 			// mid-run, or the local --timeout+5s deadline killed ssh
 			// (ERROR POLICY "Connection loss").
-			return stateUnknown()
+			return stateUnknownDone()
 		}
 		line = append([]byte(nil), scanner.Bytes()...)
 	}

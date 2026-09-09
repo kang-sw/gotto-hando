@@ -56,9 +56,21 @@ func run(args []string) int {
 	case "killmidrun":
 		// Prints a start object and exactly one ok result, then exits
 		// without a done/abort - simulating an ssh connection dropped
-		// mid-run (ERROR POLICY "Connection loss").
+		// mid-run (ERROR POLICY "Connection loss"), AFTER the wrapper has
+		// already committed to printing its own start object.
 		fmt.Print(`{"event":"start","out":"/remote/out/","dest":"local","target":{"os":"darwin"}}` + "\n")
 		fmt.Print(`{"line":1,"status":"ok","cmd":"qinfo","os":"darwin","osver":"","arch":"","ver":"0.1.0","primary":"0","desktop_x":0,"desktop_y":0,"desktop_w":0,"desktop_h":0,"displays":0,"session":"local","perms":"n/a","t_ms":1}` + "\n")
+		return 1
+
+	case "killbeforeresult":
+		// Prints ONLY a start object, then exits without a single result
+		// or a done/abort - the connection-loss case BEFORE the wrapper
+		// has printed its own start (remote.go's pre-first-result EOF
+		// site, as opposed to killmidrun's post-commit case above) - the
+		// distinction review NEW-1 is about: the wrapper must still print
+		// exactly one start of its own here, but the mid-run sites above
+		// must not print a SECOND one when they have already committed.
+		fmt.Print(`{"event":"start","out":"/remote/out/","dest":"local","target":{"os":"darwin"}}` + "\n")
 		return 1
 
 	case "badusage":
