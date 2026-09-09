@@ -6,7 +6,10 @@ related:
   260907-feat-darwin-backend: prerequisite
   260907-feat-windows-backend: prerequisite
   260908-feat-remote-ssh: prerequisite
-sage-review-design: recommended
+sage-review-design: completed
+sage-review-completeness: completed
+sage-review-design-reviewed: 946a80f56420f3af
+sage-review-completeness-reviewed: 946a80f56420f3af
 ---
 
 # rclip: load a file on the target machine into its clipboard
@@ -48,22 +51,29 @@ clipboard" in an OS-independent way. Typical flow:
   target, so preflight cannot check it). No default delay exemption: rclip
   is an input-side command and gets the global delay like `clip`.
 - Output: `<n> ok rclip type=image|text bytes=N` (image: also `WxH`).
+  `bytes` is the source-file byte count, before image conversion.
 
 ## Constraints
 
 - help.txt is the single source of truth (epic decision 1): the COMMANDS
-  entry, OUTPUT line, JSONL fields, LIMITS row and an EXAMPLES line land in
+  entry, OUTPUT line, JSONL/IR fields, LIMITS row and an EXAMPLES line land in
   `assets/help.txt` in the same commit as the code; help-remote.txt's "Files
   other than text" paragraph is updated to name `rclip` as the consumer
-  after scp. Drift tests (cli-core Phase 3) must stay green.
+  after scp. Explain `img` and `txt` as named modifier tokens in SYNTAX.
+  Drift tests (cli-core Phase 3) must stay green.
 - IR: one new op kind `rclip` with `path`, `type` (auto|image|text).
-- Sage design review is recommended before promotion to `ready/`; it has not
-  been run (deliberately deferred by the user).
+- Sage design and completeness reviews passed on 2026-09-09 after the user
+  authorized proceeding. Implementation should clarify named modifier tokens
+  in the syntax help and define the reported byte count consistently with
+  the input-file size limit.
 
 ## Spec Impact
 
-Adds one anchor (`== COMMANDS ==` already exists, so none unless a new
-section is introduced). No spec prose.
+Extend the existing help-text sections for commands, output/JSONL, limits,
+examples, and remote file handling with the `rclip` contract described above.
+The normative changes land in `assets/help.txt` and `assets/help-remote.txt`;
+their existing pointer specs remain applicable. No new section or anchor is
+required.
 
 ## Phases
 
