@@ -99,9 +99,16 @@ func TestRClipLineDelayOverrideAndRenderedOutput(t *testing.T) {
 	if err := os.WriteFile(path, []byte("hello"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	globalSeq := parse(t, "rclip[]"+path)
+	globalSeq.Defaults.DelayMS = 25
+	start := time.Now()
+	engine.Run(context.Background(), &dryrun.Backend{}, globalSeq, engine.RunOptions{})
+	if elapsed := time.Since(start); elapsed < 20*time.Millisecond {
+		t.Fatalf("global delay ignored: %s", elapsed)
+	}
 	seq := parse(t, "rclip[d=1ms]"+path)
 	seq.Defaults.DelayMS = 25
-	start := time.Now()
+	start = time.Now()
 	sum := engine.Run(context.Background(), &dryrun.Backend{}, seq, engine.RunOptions{})
 	if elapsed := time.Since(start); elapsed > 20*time.Millisecond {
 		t.Fatalf("line d= override ignored: %s", elapsed)
