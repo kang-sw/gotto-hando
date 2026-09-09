@@ -9,6 +9,7 @@ sage-review-design: completed
 sage-review-design-reviewed: 6ce907560558bea3
 sage-review-completeness: completed
 sage-review-completeness-reviewed: 6ce907560558bea3
+completed: 2026-09-09
 ---
 
 # Remote: ssh-wrapped destinations and the session bridge
@@ -537,3 +538,12 @@ Task Scheduler (Windows) recipes started from a fresh login; a fresh macOS
 signing identity raising the `--request-perms` system prompt. The Windows
 half's real over-ssh acceptance additionally remains Device-Guard (WDAC)
 blocked (a user political-determination boundary, unchanged from Phase 1).
+
+
+## Resolution (2026-09-09)
+
+All three phases merged to main: Phase 0 (minimal Windows session bridge, e18b19a/414cb7c), Phase 1 (ssh `<dest>` transport, bd85972/face10b), Phase 2 (macOS unix-socket session bridge + shared request_perms wire + InlineCaptures fix, 7ec9f43/fc36ad8). The remote-control surface is implementation-complete on both platforms: `gotto-hando <dest>` spawns ssh and relays the remote's JSONL; `gotto-hando --bridge` runs the resident GUI-session listener (Windows named pipe / macOS unix socket); a remote ssh `local` forwards session-requiring runs to that bridge (session=bridge) or aborts E_SESSION; `<dest> --request-perms` to a mac is executed by the bridge in its GUI session.
+
+Deferred non-blocking (never part of any phase's own verification boundary, recorded in each Phase Result): real over-ssh acceptance against a live second Mac/Windows box; the LaunchAgent (macOS) and Task Scheduler (Windows) recipes started from a fresh login; a fresh macOS signing identity raising the --request-perms system prompt. The Windows half's real over-ssh acceptance additionally remains blocked by the target box's Device Guard (WDAC) policy, which refuses non-interactive ssh execution of freshly cross-compiled binaries — a user political-determination boundary, not a code gap.
+
+Out-of-scope pre-existing gaps left untouched (unrelated to remote/bridge): direct-`local` qclip[f]<path> file-write in engine/query.go unimplemented; the parsed --ping option unconsulted. Spec Impact across all phases: none (help texts authored ahead in Phase 0 already documented the full contract).
