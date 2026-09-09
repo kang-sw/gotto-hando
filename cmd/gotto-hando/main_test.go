@@ -15,6 +15,15 @@ import (
 
 var binPath string
 
+// dryrunBinPath is the `-tags dryrun` "remote" binary TestMain builds
+// (same one fakessh's default passthrough spawns). remote_test.go's T1
+// capture-relay test invokes it directly, unwrapped by ssh, as the
+// "local dry-run" byte-identity baseline to diff the ssh-wrapped run
+// against - both runs exercise the identical dryrun.Backend shape, so a
+// direct comparison is meaningful (unlike diffing against binPath's own
+// `local`, which drives a completely different, real OS backend).
+var dryrunBinPath string
+
 // exeName appends the platform executable suffix.
 func exeName(base string) string {
 	if runtime.GOOS == "windows" {
@@ -76,7 +85,8 @@ func TestMain(m *testing.M) {
 	// remoteBinName's default resolves to ("gotto-hando") so the fake-ssh
 	// + real wrapper harness needs no --remote-bin override for its
 	// default-case tests.
-	buildGo(filepath.Join(remoteDir, exeName("gotto-hando")), ".", "dryrun")
+	dryrunBinPath = filepath.Join(remoteDir, exeName("gotto-hando"))
+	buildGo(dryrunBinPath, ".", "dryrun")
 	buildGo(filepath.Join(sshDir, exeName("ssh")), "./testdata/fakessh")
 
 	// Prepend both to PATH for the whole test binary: the real `ssh`

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -299,5 +302,233 @@ func TestRemoteSuccessfulRunJSONL(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(lines[3]), &done); err != nil || done.Event != "done" || done.OK != 2 || done.Err != 0 {
 		t.Fatalf("done line = %q (err=%v), want event=done ok=2 err=0", lines[3], err)
+	}
+}
+
+// Field patterns whose values are expected to legitimately differ between
+// a genuinely-local run and the same sequence relayed through the <dest>
+// ssh wrapper: timestamps/elapsed time (never reproducible), and out/
+// dest/path (which necessarily embed each run's own --out directory and
+// destination name). Every other byte in a relayed JSONL line is required
+// to be identical to a direct local dry-run of the same sequence (review
+// T1) - masking exactly these five fields, and nothing else, is what
+// makes that byte-identity claim meaningful rather than vacuous.
+var (
+	reTMS      = regexp.MustCompile(`"t_ms":\d+`)
+	reElapsed  = regexp.MustCompile(`"elapsed_ms":\d+`)
+	reOutField = regexp.MustCompile(`"out":"[^"]*"`)
+	reDest     = regexp.MustCompile(`"dest":"[^"]*"`)
+	rePath     = regexp.MustCompile(`"path":"[^"]*"`)
+)
+
+func normalizeJSONLForDiff(line string) string {
+	line = reTMS.ReplaceAllString(line, `"t_ms":0`)
+	line = reElapsed.ReplaceAllString(line, `"elapsed_ms":0`)
+	line = reOutField.ReplaceAllString(line, `"out":"OUT"`)
+	line = reDest.ReplaceAllString(line, `"dest":"DEST"`)
+	line = rePath.ReplaceAllString(line, `"path":"PATH"`)
+	return line
+}
+
+// capturePathFromLine extracts a cap result's "path" field value from a
+// raw (unnormalized) JSONL line, for reading back the actual PNG file it
+// names.
+func capturePathFromLine(t *testing.T, line string) string {
+	t.Helper()
+	m := rePath.FindStringSubmatch(line)
+	if m == nil {
+		t.Fatalf("no \"path\" field in cap line: %q", line)
+	}
+	// m[0] is `"path":"<value>"`; decode it directly as a one-field object.
+	var v struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte("{"+m[0]+"}"), &v); err != nil {
+		t.Fatalf("decode path field %q: %v", m[0], err)
+	}
+	return v.Path
+}
+
+// runDryrunBinDirect runs the harness's own `-tags dryrun` "remote" binary
+// directly, unwrapped by ssh/fakessh - the T1 "local dry-run" baseline: it
+// binds `local` to the exact same dryrun.Backend shape
+// (dispatch_dryrun.go) the ssh wrapper's fakessh ultimately spawns, so
+// diffing its output against a wrapped run is meaningful (unlike diffing
+// against binPath's own `local`, which would drive a completely different,
+// real OS backend on darwin/windows).
+func runDryrunBinDirect(t *testing.T, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	cmd := exec.Command(dryrunBinPath, args...)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	if err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run %v: %v", args, err)
+		}
+		code = ee.ExitCode()
+	}
+	return outBuf.String(), errBuf.String(), code
+}
+
+// TestRemoteCaptureRelayByteIdentical is T1: it drives the same multi-op
+// sequence (drawn from help.txt EXAMPLES/DESTINATIONS - the "hold a
+// modifier across several actions" line plus the DESTINATIONS section's
+// own "'win[]Blender' 'k[]a' 'cap' # PNG on THIS machine" capture
+// illustration, combined and adapted to ops the dryrun backend always
+// succeeds at) through two paths: (a) directly against the -tags dryrun
+// binary (the "local dry-run" baseline, no ssh/relay involved) and (b)
+// through the real <dest> ssh wrapper via fakessh's default passthrough
+// to that SAME binary. Every JSONL byte other than timestamps/elapsed
+// time/out/dest/path (necessarily run-specific) must be identical between
+// the two - including the --inline-captures wire relay's decoded cap
+// object (path/w/h/origin/scale field shape and order) - and the two
+// runs' actual written PNG capture files must be byte-for-byte identical,
+// proving the base64-over-the-wire -> local-file pipeline is lossless.
+func TestRemoteCaptureRelayByteIdentical(t *testing.T) {
+	seq := []string{"kd[]shift", "c[]100,100", "c[]300,100", "ku[]shift", "cap"}
+
+	dirA := filepath.Join(t.TempDir(), "outA")
+	baseArgs := append([]string{"--jsonl", "--out", dirA, "local"}, seq...)
+	baseOut, baseErr, baseCode := runDryrunBinDirect(t, baseArgs...)
+	if baseCode != 0 {
+		t.Fatalf("baseline exit = %d, want 0 (stderr=%q, stdout=%q)", baseCode, baseErr, baseOut)
+	}
+	if baseErr != "" {
+		t.Fatalf("baseline stderr = %q, want empty", baseErr)
+	}
+
+	dirB := filepath.Join(t.TempDir(), "outB")
+	wrapArgs := append([]string{"--jsonl", "--out", dirB, "devbox"}, seq...)
+	wrapOut, wrapErr, wrapCode := runBin(t, "", wrapArgs...)
+	if wrapCode != 0 {
+		t.Fatalf("wrapped exit = %d, want 0 (stderr=%q, stdout=%q)", wrapCode, wrapErr, wrapOut)
+	}
+	if wrapErr != "" {
+		t.Fatalf("wrapped stderr = %q, want empty", wrapErr)
+	}
+
+	baseLines := strings.Split(strings.TrimRight(baseOut, "\n"), "\n")
+	wrapLines := strings.Split(strings.TrimRight(wrapOut, "\n"), "\n")
+	if len(baseLines) != len(wrapLines) {
+		t.Fatalf("line count: baseline=%d wrapped=%d\nbaseline=%q\nwrapped=%q",
+			len(baseLines), len(wrapLines), baseOut, wrapOut)
+	}
+
+	var basePNGPath, wrapPNGPath string
+	for i := range baseLines {
+		nb, nw := normalizeJSONLForDiff(baseLines[i]), normalizeJSONLForDiff(wrapLines[i])
+		if nb != nw {
+			t.Errorf("line %d differs after normalization:\n  baseline=%q\n  wrapped =%q\n  (raw baseline=%q)\n  (raw wrapped =%q)",
+				i, nb, nw, baseLines[i], wrapLines[i])
+		}
+		if strings.Contains(baseLines[i], `"cmd":"cap"`) {
+			basePNGPath = capturePathFromLine(t, baseLines[i])
+			wrapPNGPath = capturePathFromLine(t, wrapLines[i])
+		}
+	}
+
+	if basePNGPath == "" || wrapPNGPath == "" {
+		t.Fatal("no cap result line found in either run's output")
+	}
+	baseBytes, err := os.ReadFile(basePNGPath)
+	if err != nil {
+		t.Fatalf("read baseline PNG %q: %v", basePNGPath, err)
+	}
+	wrapBytes, err := os.ReadFile(wrapPNGPath)
+	if err != nil {
+		t.Fatalf("read wrapped PNG %q: %v", wrapPNGPath, err)
+	}
+	if !bytes.Equal(baseBytes, wrapBytes) {
+		t.Errorf("capture PNG bytes differ: baseline %d bytes (%s), wrapped %d bytes (%s)",
+			len(baseBytes), basePNGPath, len(wrapBytes), wrapPNGPath)
+	}
+}
+
+// TestRemoteExpectVersionMismatch is T2: fakessh's "versionmismatch" dest
+// real-spawns the dryrun remote binary but appends a conflicting
+// --expect-version AFTER the wrapper's own correct one - parseArgs' last-
+// occurrence-wins semantics (cmd/gotto-hando/options.go) make the remote's
+// own genuine, pre-existing version-mismatch check
+// (dispatch.go:89-92-equivalent) fire for real, printing "version
+// mismatch: remote <x>, expected <y>" to ITS OWN stderr and exiting before
+// any start line - relayed here as exit 3 (E_CONNECT), that exact message
+// on stderr, empty stdout (help-remote.txt TROUBLESHOOTING).
+func TestRemoteExpectVersionMismatch(t *testing.T) {
+	out, errOut, code := runBin(t, "", "versionmismatch", "qinfo")
+	if code != 3 {
+		t.Fatalf("exit = %d, want 3 (stderr=%q)", code, errOut)
+	}
+	if out != "" {
+		t.Fatalf("stdout = %q, want empty", out)
+	}
+	if !strings.Contains(errOut, "version mismatch: remote "+version()+", expected 9.9.9") {
+		t.Errorf("stderr = %q, want the remote's own genuine version-mismatch message", errOut)
+	}
+}
+
+// TestRemoteTargetOSRelayed is the I1 best-effort test: fakessh's
+// "winrelay" dest scripts a full successful run whose start object's
+// target.os is hardcoded "windows" - a value that can never coincidentally
+// match the test host's own runtime.GOOS (this package's other scripted
+// scenarios mostly hardcode darwin/windows too, but this is the one whose
+// entire point is proving the relayed value is NOT locally regenerated).
+// Before review I1, the wrapper printed its OWN runtime.GOOS here; this
+// test fails against that old behavior on any host except an actual
+// Windows one.
+func TestRemoteTargetOSRelayed(t *testing.T) {
+	out, errOut, code := runBin(t, "", "--jsonl", "winrelay", "qinfo")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (stderr=%q)", code, errOut)
+	}
+	if errOut != "" {
+		t.Fatalf("stderr = %q, want empty", errOut)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) == 0 {
+		t.Fatalf("stdout = %q, want at least a start line", out)
+	}
+	var start struct {
+		Event  string `json:"event"`
+		Target struct {
+			OS string `json:"os"`
+		} `json:"target"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &start); err != nil {
+		t.Fatalf("decode start line: %v (%q)", err, lines[0])
+	}
+	if start.Event != "start" || start.Target.OS != "windows" {
+		t.Errorf("start = %+v, want event=start target.os=windows (relayed from the remote, not local runtime.GOOS)", start)
+	}
+}
+
+// TestRemotePasteErrSrcRestored is the I-test best-effort integration
+// test: fakessh's "pastefail" dest scripts a genuine "err" result for a
+// paste command whose wire "src" is the INLINED form a real remote would
+// see after local [f] rewrite - exercising internal/remote.Relay.Process's
+// err-src-restoration (relay.go) through the REAL runRemote spawn/relay
+// loop end to end, complementing (not replacing) the existing unit-level
+// coverage in internal/remote/relay_test.go's
+// TestRelayProcessErrRestoresLocalSrc.
+func TestRemotePasteErrSrcRestored(t *testing.T) {
+	scriptPath := filepath.Join(t.TempDir(), "cmd.py")
+	if err := os.WriteFile(scriptPath, []byte("print('hi')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code := runBin(t, "", "pastefail", "paste[f]"+scriptPath)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 (a runtime err, stderr=%q)", code, errOut)
+	}
+	if errOut != "" {
+		t.Fatalf("stderr = %q, want empty", errOut)
+	}
+	wantSrc := "paste[f]" + scriptPath
+	if !strings.Contains(out, wantSrc) {
+		t.Errorf("stdout = %q, want it to contain the caller's own original src %q (not the wire-inlined form)", out, wantSrc)
+	}
+	if strings.Contains(out, "inlined cmd.py contents") {
+		t.Errorf("stdout = %q, want the wire's inlined src NOT to leak through", out)
 	}
 }

@@ -67,6 +67,46 @@ func run(args []string) int {
 		// near --expect-version or a start line (a "pre---expect-version
 		// usage error").
 		return spawnPassthrough(remoteBin, append(rest, "--totally-bogus-option-xyz"), nil)
+
+	case "versionmismatch":
+		// Real-spawns the remote binary with an EXTRA --expect-version
+		// appended after the wrapper's own correct one (parseArgs' last
+		// occurrence wins, cmd/gotto-hando/options.go) - the remote's own
+		// pre-existing version-mismatch check (dispatch.go, unchanged by
+		// this ticket) then genuinely fires and prints "version mismatch:
+		// remote <x>, expected <y>" to its OWN stderr and exits 3 before
+		// ever printing a start line (help-remote.txt HOW IT WORKS step 3,
+		// TROUBLESHOOTING) - a real remote-side mismatch, not a fabricated
+		// stdout script (review T2).
+		return spawnPassthrough(remoteBin, append(rest, "--expect-version", "9.9.9"), os.Stdin)
+
+	case "winrelay":
+		// A scripted successful run (no real remote binary involved)
+		// whose target is windows regardless of the local test host's own
+		// GOOS - proof that a relayed "start" object carries the REMOTE's
+		// real target.os, not the local wrapper's runtime.GOOS (review
+		// I1). Deterministic on every host, including a darwin CI runner
+		// where target.os would otherwise coincidentally match by
+		// accident.
+		fmt.Print(`{"event":"start","out":"/remote/out/","dest":"local","target":{"os":"windows"}}` + "\n")
+		fmt.Print(`{"line":1,"status":"ok","cmd":"qinfo","os":"windows","osver":"","arch":"","ver":"0.1.0","primary":"ctrl","desktop_x":0,"desktop_y":0,"desktop_w":0,"desktop_h":0,"displays":0,"session":"bridge","perms":"n/a","t_ms":1}` + "\n")
+		fmt.Print(`{"event":"done","ok":1,"err":0,"skip":0,"elapsed_ms":2,"held_released":0}` + "\n")
+		return 0
+
+	case "pastefail":
+		// A scripted run (no real remote binary involved) whose one line
+		// is a genuine "err" result for a paste command - exercising the
+		// wrapper's err-src-restoration through the REAL runRemote spawn/
+		// relay loop end to end, not just internal/remote/relay_test.go's
+		// unit-level Relay.Process coverage (review I-test). The wire
+		// "src" is deliberately the INLINED form a real remote would see
+		// after [f] rewrite, so the test can assert the wrapper restores
+		// the caller's original "paste[f]./cmd.py" from its own local
+		// parse, not this wire value.
+		fmt.Print(`{"event":"start","out":"/remote/out/","dest":"local","target":{"os":"darwin"}}` + "\n")
+		fmt.Print(`{"line":1,"status":"err","cmd":"paste","src":"paste[]inlined cmd.py contents","code":"E_CLIPBOARD","msg":"clipboard set failed"}` + "\n")
+		fmt.Print(`{"event":"done","ok":0,"err":1,"skip":0,"elapsed_ms":3,"held_released":0}` + "\n")
+		return 0
 	}
 
 	return spawnPassthrough(remoteBin, rest, os.Stdin)
