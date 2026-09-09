@@ -51,6 +51,24 @@ func decodeDoneEvent(line []byte) (wireDone, bool) {
 	return d, true
 }
 
+// resultStatus returns a valid bridge result status for the forwarder's
+// post-start connection-loss summary. It intentionally ignores malformed or
+// non-result frames, which relayResult preserves under the existing contract.
+func resultStatus(line []byte) string {
+	var event struct {
+		Status string `json:"status"`
+	}
+	if json.Unmarshal(line, &event) != nil {
+		return ""
+	}
+	switch event.Status {
+	case "ok", "err", "skip", "warn":
+		return event.Status
+	default:
+		return ""
+	}
+}
+
 // relayResult prints one bridge per-line result event to stdout in
 // whichever form the caller asked for. --jsonl forwards the line
 // byte-for-byte (the bridge's own writer, internal/output.WriteResult, is

@@ -61,6 +61,13 @@ func buildGo(outPath, pkgDir string, tags ...string) {
 //     remote_test.go's <dest> ssh-wrapper tests drive binPath against
 //     them without touching a real ssh or OS backend.
 func TestMain(m *testing.M) {
+	// Cross-compiled focused tests run on the Windows GUI host, where Go is
+	// deliberately absent. The bridge-forwarding unit tests use only their
+	// in-process net.Pipe seam, so they can skip subprocess fixtures there.
+	if os.Getenv("GOTTO_HANDO_SKIP_SUBPROCESS_BUILDS") == "1" {
+		os.Exit(m.Run())
+	}
+
 	dir, err := os.MkdirTemp("", "gotto-hando-test-*")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mkdtemp:", err)

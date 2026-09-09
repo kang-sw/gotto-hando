@@ -96,6 +96,13 @@ func ListenBridge() (*PipeListener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bridge: resolve username: %w", err)
 	}
+	return listenBridgeAt(PipeName(username))
+}
+
+// listenBridgeAt creates a current-user-ACL'd bridge pipe at name. Production
+// uses the stable per-user PipeName; Windows-native tests use a unique private
+// name so they never touch the resident desktop bridge.
+func listenBridgeAt(name string) (*PipeListener, error) {
 	sddl, err := currentUserSDDL()
 	if err != nil {
 		return nil, fmt.Errorf("bridge: build ACL: %w", err)
@@ -108,7 +115,7 @@ func ListenBridge() (*PipeListener, error) {
 		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
 		SecurityDescriptor: sd,
 	}
-	namePtr, err := windows.UTF16PtrFromString(PipeName(username))
+	namePtr, err := windows.UTF16PtrFromString(name)
 	if err != nil {
 		return nil, fmt.Errorf("bridge: pipe name: %w", err)
 	}
@@ -173,16 +180,26 @@ func (l *PipeListener) Close() error {
 	return windows.CloseHandle(l.handle)
 }
 
-// pipeConn wraps a server-side named-pipe instance. Close disconnects the
-// client (DisconnectNamedPipe) without destroying the pipe instance itself
-// - the handle is reused by the PipeListener's next Accept() call.
+// pipeConn wraps a server-side named-pipe instance. Close flushes buffered
+// output before DisconnectNamedPipe: DisconnectNamedPipe discards unread
+// bytes, including the terminal done frame, while FlushFileBuffers waits for
+// the client to consume them. Disconnect still always follows a failed flush
+// (for example, a disconnected client) so the same listener can Accept again.
+// The handle itself remains alive for the PipeListener's next Accept call.
 type pipeConn struct {
 	handle windows.Handle
 }
 
 func (c *pipeConn) Read(p []byte) (int, error)  { return pipeRead(c.handle, p) }
 func (c *pipeConn) Write(p []byte) (int, error) { return pipeWrite(c.handle, p) }
-func (c *pipeConn) Close() error                { return windows.DisconnectNamedPipe(c.handle) }
+func (c *pipeConn) Close() error {
+	flushErr := windows.FlushFileBuffers(c.handle)
+	disconnectErr := windows.DisconnectNamedPipe(c.handle)
+	if flushErr != nil {
+		return flushErr
+	}
+	return disconnectErr
+}
 
 // clientPipeConn wraps a client-side dial (DialBridge). Unlike pipeConn,
 // Close destroys the handle outright (CloseHandle) - a client dial has no

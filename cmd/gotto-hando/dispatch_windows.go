@@ -198,6 +198,14 @@ func forwardToBridge(opts parsedOptions, seq *ir.Sequence, stdout, stderr io.Wri
 
 	outDir := output.DefaultOutDir(opts.Out, opts.Dest, newRunID())
 	_ = output.WriteStart(stdout, opts.JSONL, opts.Dest, outDir)
+	startedAt := time.Now()
+	ok, errN, skip := 0, 0, 0
+	stateUnknownDone := func() int {
+		_ = output.WriteDone(stdout, opts.JSONL, output.Done{
+			OK: ok, Err: errN, Skip: skip, ElapsedMS: time.Since(startedAt).Milliseconds(), StateUnknown: true,
+		})
+		return output.ExitStateUnknown
+	}
 
 	for {
 		if code, msg, isAbort := decodeAbortEvent(line); isAbort {
@@ -210,7 +218,7 @@ func forwardToBridge(opts parsedOptions, seq *ir.Sequence, stdout, stderr io.Wri
 		}
 		if done, ok := decodeDoneEvent(line); ok {
 			if err := relayDone(opts, stdout, line, done); err != nil {
-				return abort(output.EConnect, "bridge connection failed: "+err.Error())
+				return stateUnknownDone()
 			}
 			if done.Err > 0 {
 				return output.ExitRuntimeFailure
@@ -218,10 +226,18 @@ func forwardToBridge(opts parsedOptions, seq *ir.Sequence, stdout, stderr io.Wri
 			return output.ExitOK
 		}
 		if err := relayResult(opts, stdout, line); err != nil {
-			return abort(output.EConnect, "bridge connection failed: "+err.Error())
+			return stateUnknownDone()
+		}
+		switch resultStatus(line) {
+		case "err":
+			errN++
+		case "skip":
+			skip++
+		case "ok", "warn":
+			ok++
 		}
 		if !scanner.Scan() {
-			return abort(output.EConnect, "bridge connection closed mid-run")
+			return stateUnknownDone()
 		}
 		line = append([]byte(nil), scanner.Bytes()...)
 	}
