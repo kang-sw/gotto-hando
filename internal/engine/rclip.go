@@ -37,11 +37,23 @@ func loadRClip(path, requested string) (rclipLoaded, error) {
 	if info.Size() > ir.MaxRClipBytes {
 		return rclipLoaded{}, fmt.Errorf("rclip file exceeds 64 MiB")
 	}
-	f, err := os.Open(path)
+	if !info.Mode().IsRegular() {
+		return rclipLoaded{}, fmt.Errorf("rclip path is not a regular file")
+	}
+	f, err := openRClip(path)
 	if err != nil {
 		return rclipLoaded{}, fmt.Errorf("cannot read rclip file: %w", err)
 	}
 	defer f.Close()
+	// Check the opened descriptor too: the pathname may be replaced between
+	// Stat and Open, and a FIFO/device could otherwise block the bridge.
+	openedInfo, err := f.Stat()
+	if err != nil {
+		return rclipLoaded{}, fmt.Errorf("cannot stat opened rclip file: %w", err)
+	}
+	if !openedInfo.Mode().IsRegular() {
+		return rclipLoaded{}, fmt.Errorf("rclip path is not a regular file")
+	}
 	data, err := io.ReadAll(io.LimitReader(f, int64(ir.MaxRClipBytes)+1))
 	if err != nil {
 		return rclipLoaded{}, fmt.Errorf("cannot read rclip file: %w", err)

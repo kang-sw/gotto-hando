@@ -107,6 +107,22 @@ func TestRelayProcessPassthroughLine(t *testing.T) {
 	}
 }
 
+func TestRelayProcessRClipPreservesJSONAndRebuildsPlainDetail(t *testing.T) {
+	seq := parseInlined(t, []string{"rclip[]/target/shot.png"})
+	rl := &Relay{LocalSeq: seq}
+	wire := `{"line":1,"status":"ok","cmd":"rclip","type":"image","bytes":12,"width":2,"height":3,"t_ms":4}`
+	res, rawForJSONL, err := rl.Process([]byte(wire))
+	if err != nil {
+		t.Fatalf("Process error: %v", err)
+	}
+	if string(rawForJSONL) != wire {
+		t.Errorf("rawForJSONL = %q, want verbatim %q", rawForJSONL, wire)
+	}
+	if res.Detail != "type=image bytes=12 2x3" {
+		t.Errorf("detail = %q", res.Detail)
+	}
+}
+
 // TestRelayProcessCaptureDecodesInlineFrame asserts a "cap" line's
 // --inline-captures base64 payload is decoded and written to a local file
 // under OutDir via the same CapturePath/WriteCaptureFile convention a

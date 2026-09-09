@@ -157,8 +157,9 @@ grep for it.
                (k, txt, m, c, cap, win, qwin, exec, ...).
   <modifiers>  comma-separated tokens. A token containing `=` is a
                key=value pair; any other token is a group of single-letter
-               flags ([ms] = flags m and s; [ms=20] = key ms; [cs] = [c,s]).
-               Values cannot contain `,` or `]` and have no quoting or
+               flags ([ms] = flags m and s; [ms=20] = key ms; [cs] = [c,s]),
+               except command-defined named tokens: rclip accepts img or
+               txt as one token. Values cannot contain `,` or `]` and have no
                escapes. A list inside a value is `:`-separated; rect= is
                the only list-valued key (rect=0:0:600:400). Long values
                such as paths go in the payload instead. Unknown and
@@ -356,7 +357,8 @@ grep for it.
       default) treats .png, .jpg, .jpeg, .gif, .bmp, .tif and .tiff
       case-insensitively as images, otherwise UTF-8 text; img and txt
       override auto. Images are normalized to PNG/TIFF (macOS) or PNG/DIB
-      (Windows). Result: type=text|image bytes=N [WxH]. Read, UTF-8,
+      (Windows). bytes=N is the original source-file byte count before image
+      conversion. Result: type=text|image bytes=N [WxH]. Read, UTF-8,
       decode, and clipboard errors are E_CLIPBOARD. Follow with k[p]v to
       paste; rclip itself never sends keys.
 
@@ -605,6 +607,7 @@ grep for it.
             also follow err results (non-zero exit, timeout). With noerr a
             non-zero exit is still ok: read exit=N yourself.
     cap     <path> <w>x<h> origin=<x>,<y> scale=<f>
+    rclip   type=<text|image> bytes=<source-file bytes> [<w>x<h>]
     win     id=<id> app=<app> matched=<N> <x>,<y> <w>x<h> "<title>"
   Capture paths: <out>/<NNNN>-<label>-<UTC timestamp>.png; NNNN is the
   per-run counter, n>1 adds -00, -01, ... . <out> = --out, else
@@ -627,6 +630,10 @@ grep for it.
      "stderr":"","truncated":false,"t_ms":41}
     {"line":7,"status":"err","cmd":"c","src":"c[w]1500,300",
      "code":"E_BOUNDS","msg":"coordinates outside current window"}
+    {"line":8,"status":"ok","cmd":"rclip","type":"image",
+     "bytes":1234,"width":640,"height":480,"t_ms":9}
+    rclip uses type "text" or "image"; bytes is the source-file byte
+    count before conversion. Image results also carry width and height.
   Capture bursts report each frame's scheduled and actual time and the
   slippage between them.
   When the run stops before any line executed (preflight failure, bridge

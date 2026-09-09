@@ -32,7 +32,9 @@ var (
 	selSetStringForType    objc.SEL
 	selStringForType       objc.SEL
 	selSetDataForType      objc.SEL
-	selDataWithBytesLength objc.SEL
+	selAlloc               objc.SEL
+	selInitWithBytesLength objc.SEL
+	selRelease             objc.SEL
 	clipboardOnce          sync.Once
 )
 
@@ -52,13 +54,15 @@ func initClipboard() {
 		selSetStringForType = objc.RegisterName("setString:forType:")
 		selStringForType = objc.RegisterName("stringForType:")
 		selSetDataForType = objc.RegisterName("setData:forType:")
-		selDataWithBytesLength = objc.RegisterName("dataWithBytes:length:")
+		selAlloc = objc.RegisterName("alloc")
+		selInitWithBytesLength = objc.RegisterName("initWithBytes:length:")
+		selRelease = objc.RegisterName("release")
 	})
 }
 
-// ClipboardSetImage publishes both normalized representations. NSData's
-// factory copies bytes, so its autoreleased objects remain valid through the
-// synchronous pasteboard calls and no Go memory crosses the call boundary.
+// ClipboardSetImage publishes both normalized representations. Each NSData
+// is explicitly owned and released after its synchronous pasteboard call:
+// command-line and bridge processes do not have an autorelease pool.
 func (b *Backend) ClipboardSetImage(ctx context.Context, image backend.ClipboardImage) error {
 	initClipboard()
 	pb := objc.ID(nsPasteboardClass).Send(selGeneralPasteboard)
@@ -71,8 +75,9 @@ func (b *Backend) ClipboardSetImage(ctx context.Context, image backend.Clipboard
 			return errors.New("empty normalized clipboard image representation")
 		}
 		typ := cfString(item.typ)
-		data := objc.ID(nsDataClass).Send(selDataWithBytesLength, unsafe.Pointer(&item.data[0]), uintptr(len(item.data)))
+		data := objc.ID(nsDataClass).Send(selAlloc).Send(selInitWithBytesLength, unsafe.Pointer(&item.data[0]), uintptr(len(item.data)))
 		ok := objc.Send[bool](pb, selSetDataForType, data, objc.ID(typ))
+		data.Send(selRelease)
 		cfRelease(typ)
 		if !ok {
 			return errors.New("NSPasteboard setData:forType: returned false")
