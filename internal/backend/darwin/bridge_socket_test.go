@@ -3,12 +3,19 @@
 package darwin
 
 import (
+	"bufio"
+	"context"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/kang-sw/gotto-hando/internal/backend/dryrun"
+	"github.com/kang-sw/gotto-hando/internal/bridge"
+	"github.com/kang-sw/gotto-hando/internal/ir"
+	"github.com/kang-sw/gotto-hando/internal/syntax"
 )
 
 // withTempHome points $HOME at a fresh temp directory for the duration of
@@ -45,6 +52,32 @@ func TestBridgeSocketRoundTrip(t *testing.T) {
 		t.Fatalf("ListenBridge: %v", err)
 	}
 	defer ln.Close()
+
+	// Guard the two os.Chmod calls in ListenBridge against a umask or
+	// pre-existing-looser-directory regression that would expose the
+	// socket to other local users (help-macos.txt SESSION BRIDGE FOR SSH
+	// (REMOTE MAC): "socket file 0600, directory 0700"). Empirically
+	// confirmed on macOS: os.Stat on a chmod(0600) unix-socket inode
+	// reports Mode() "Srw-------" / Perm() 0600, same as a regular file -
+	// no surprising OS-reported bits for the socket type here.
+	path, err := bridgeSocketPath()
+	if err != nil {
+		t.Fatalf("bridgeSocketPath: %v", err)
+	}
+	dirInfo, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("stat bridge dir: %v", err)
+	}
+	if perm := dirInfo.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("bridge dir perm = %o, want 0700", perm)
+	}
+	sockInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat bridge socket: %v", err)
+	}
+	if perm := sockInfo.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("bridge socket perm = %o, want 0600", perm)
+	}
 
 	acceptedCh := make(chan io.ReadWriteCloser, 1)
 	acceptErrCh := make(chan error, 1)
@@ -149,5 +182,134 @@ func TestBridgeSocketStaleFileRecovers(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(home, "Library", "Application Support", "gotto-hando")); err != nil {
 		t.Fatalf("bridge directory missing: %v", err)
+	}
+}
+
+// (d) caller-disconnect -> held-key-release, exercised over a REAL darwin
+// unix socket (ListenBridge/DialBridge), not the GOOS-agnostic net.Pipe()
+// harness internal/bridge/session_test.go:TestHandleWriteFailureStopsRunAndReleasesHeldKey
+// already covers. The release mechanism itself (OnResult write-failure ->
+// cancel() -> engine's unconditional releaseAll) is transport-agnostic, but
+// this closes the plan's Codebase Findings gap that specifically called for
+// a real-socket exercise of it. kd[]shift holds a key that only end-of-run
+// releaseAll frees; k[]a/k[]b are plain taps (press+release, never held) so
+// the only way "KeyUp shift" appears is via the cancel-triggered
+// early-stop's releaseAll, not via k[]a/k[]b's own execution. After the
+// disconnected run finishes, a second DialBridge/Accept pair must still
+// succeed - the listener itself must remain healthy after one caller drops
+// mid-run.
+func TestBridgeSocketDisconnectReleasesHeldKey(t *testing.T) {
+	withTempHome(t)
+
+	ln, err := ListenBridge()
+	if err != nil {
+		t.Fatalf("ListenBridge: %v", err)
+	}
+	defer ln.Close()
+
+	seq, diags := syntax.Parse([]string{"kd[]shift", "k[]a", "k[]b"}, ir.Defaults{})
+	if len(diags) != 0 {
+		t.Fatalf("parse diags: %+v", diags)
+	}
+	if d := ir.Validate(seq, 3); len(d) != 0 {
+		t.Fatalf("validate diags: %+v", d)
+	}
+	body, err := bridge.EncodeRequest(seq, bridge.RunEnvelope{})
+	if err != nil {
+		t.Fatalf("EncodeRequest: %v", err)
+	}
+
+	be := &dryrun.Backend{}
+	sess := &bridge.Session{Backend: be}
+
+	serverDone := make(chan struct{})
+	acceptedCh := make(chan io.ReadWriteCloser, 1)
+	acceptErrCh := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			acceptErrCh <- err
+			return
+		}
+		acceptedCh <- conn
+		go func() {
+			sess.Handle(context.Background(), conn)
+			close(serverDone)
+		}()
+	}()
+
+	client, err := DialBridge()
+	if err != nil {
+		t.Fatalf("DialBridge: %v", err)
+	}
+	select {
+	case <-acceptedCh:
+	case err := <-acceptErrCh:
+		t.Fatalf("Accept: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Accept did not return after DialBridge connected")
+	}
+
+	go func() {
+		if _, err := client.Write(append(body, '\n')); err != nil {
+			// Expected once the read side below closes the connection
+			// mid-run: a soft log, not a failure.
+			t.Logf("client write: %v", err)
+		}
+	}()
+
+	// Read exactly through the "start" event and the first (kd[]shift)
+	// result, then close the client end - mirrors
+	// TestHandleWriteFailureStopsRunAndReleasesHeldKey's timing, now over
+	// the real socket.
+	sc := bufio.NewScanner(client)
+	for i := 0; i < 2; i++ {
+		if !sc.Scan() {
+			t.Fatalf("scan %d: %v", i, sc.Err())
+		}
+	}
+	client.Close()
+
+	select {
+	case <-serverDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Handle did not return after the caller disconnected")
+	}
+
+	found := false
+	for _, c := range be.Calls {
+		if c == "KeyUp shift" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("be.Calls = %v, want a KeyUp shift release after the caller disconnected mid-run", be.Calls)
+	}
+
+	// The bridge listener must still accept a subsequent caller after the
+	// first one dropped mid-run.
+	acceptedCh2 := make(chan io.ReadWriteCloser, 1)
+	acceptErrCh2 := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			acceptErrCh2 <- err
+			return
+		}
+		acceptedCh2 <- conn
+	}()
+	client2, err := DialBridge()
+	if err != nil {
+		t.Fatalf("second DialBridge: %v", err)
+	}
+	defer client2.Close()
+	select {
+	case conn := <-acceptedCh2:
+		conn.Close()
+	case err := <-acceptErrCh2:
+		t.Fatalf("second Accept: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("second Accept did not return after the second DialBridge connected")
 	}
 }
