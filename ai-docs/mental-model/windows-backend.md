@@ -56,6 +56,18 @@ this Go-less-target project.
   DIB conversion, but this success/failure ownership boundary is FFI behavior
   and is not observable in that unit test.
 
+- **A server `pipeConn.Close` must flush before it disconnects, but it must
+  disconnect even when that flush fails.** `DisconnectNamedPipe` discards
+  unread buffered output, which can silently lose a bridge's terminal `done`
+  or capture frame. `FlushFileBuffers` waits for the client to consume those
+  bytes, so a deliberately blocked reader also intentionally blocks server
+  close until it reads or disconnects. On a disconnected client the flush
+  returns an error; still calling `DisconnectNamedPipe` is what returns the
+  one-instance listener to a reusable state for its next `Accept`. Preserve
+  this ordering and cleanup independence when changing the pipe wrapper;
+  `bridge_pipe_test.go` covers both the drain wait and the failed-flush reuse
+  path on private test pipe names.
+
 ## Verification Reality
 
 Go is not installed on the Windows target box, so windows-gated code is

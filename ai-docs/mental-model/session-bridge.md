@@ -2,6 +2,7 @@
 domain: session-bridge
 description: "GOOS-agnostic bridge request/response core (internal/bridge) plus the per-OS listener endpoints (darwin unix socket, windows named pipe)"
 sources:
+  - cmd/gotto-hando/
   - internal/bridge/
   - internal/backend/darwin/
   - internal/backend/windows/
@@ -60,6 +61,22 @@ captures only what the code cannot make obvious on its own.
   directory). This is why the `<dest>` ssh wrapper's inline-capture relay
   path (`remote-transport.md`) is the primary Phase-2 capture path rather
   than a file left on the bridge host.
+
+- **After a bridge forwarder has emitted its local `start`, a transport or
+  output failure must emit exactly one synthesized `done state=unknown`, with
+  engine-compatible totals for the primary results it received.** Both platform-specific
+  `forwardToBridge` loops have already discarded the bridge's start and then
+  committed to their own start before they relay the first result. Reusing an
+  error path that writes start would therefore duplicate it; dropping the
+  terminal frame would leave a caller unable to distinguish a completed run
+  from an interrupted one. The fallback counts `ok`, `err`, and `skip` from
+  relayed operation results, including ordinary warnings as `ok`, but excludes
+  end-of-run `kd`/`md` auto-release warnings because `engine.Run` streams them
+  without adding them to `Done.OK`. Keep `resultCounts` aligned with that
+  engine accounting if either result stream changes. The exact-shape and
+  held-input regressions in `dispatch_darwin_test.go` and
+  `dispatch_windows_test.go` cover this only after forcing the terminal write
+  to fail.
 
 - **The macOS `--bridge` single-instance guarantee
   (`internal/backend/darwin/bridge_socket.go`'s `ListenBridge`) is a
