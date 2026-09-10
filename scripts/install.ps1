@@ -1,6 +1,6 @@
 param([string]$Version = "latest", [string]$Repository = "kang-sw/gotto-hando")
 $ErrorActionPreference = "Stop"
-$InstallDir = Join-Path ([Environment]::GetFolderPath("UserProfile")) ".local/bin"
+$InstallDir = if ($env:GOTTO_HANDO_INSTALL_DIR) { $env:GOTTO_HANDO_INSTALL_DIR } else { Join-Path ([Environment]::GetFolderPath("UserProfile")) ".local/bin" }
 if ($Version -eq "latest") { $Version = (Invoke-RestMethod "https://api.github.com/repos/$Repository/releases/latest").tag_name }
 $Version = $Version.TrimStart("v")
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$') { throw "Invalid release version: $Version" }

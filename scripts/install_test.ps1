@@ -1,5 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$BinaryPath)
 $ErrorActionPreference = 'Stop'
+$pathBefore = $env:Path
 $root = Join-Path ([IO.Path]::GetTempPath()) ("gotto-hando-test-" + [guid]::NewGuid())
 $assetDir = Join-Path $root 'v0.1.0'
 $installDir = Join-Path $root 'install dir\.local\bin'
@@ -8,11 +9,11 @@ Copy-Item $BinaryPath (Join-Path $assetDir 'gotto-hando-windows-amd64.exe')
 $hash = (Get-FileHash (Join-Path $assetDir 'gotto-hando-windows-amd64.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
 "$hash  gotto-hando-windows-amd64.exe" | Set-Content (Join-Path $assetDir 'SHA256SUMS') -NoNewline
 $portFile = Join-Path $root 'port'
-$server = Start-Process python -ArgumentList "-m http.server 0 --bind 127.0.0.1 --directory `"$root`"" -PassThru -RedirectStandardError (Join-Path $root 'err') -RedirectStandardOutput (Join-Path $root 'out')
+$server = Start-Process python -ArgumentList "-u -m http.server 0 --bind 127.0.0.1 --directory `"$root`"" -PassThru -RedirectStandardError (Join-Path $root 'err') -RedirectStandardOutput (Join-Path $root 'out')
 try {
   for ($i=0; $i -lt 50; $i++) {
     Start-Sleep -Milliseconds 100
-    $line = Get-Content (Join-Path $root 'err') -ErrorAction SilentlyContinue | Select-String 'port ([0-9]+)'
+    $line = Get-Content (Join-Path $root 'out') -ErrorAction SilentlyContinue | Select-String 'port ([0-9]+)'
     if ($line) { $port = [int]$line.Matches[0].Groups[1].Value; break }
   }
   if (-not $port) { throw 'local HTTP server did not start' }
@@ -21,8 +22,14 @@ try {
   & $PSScriptRoot\install.ps1 0.1.0
   $target = Join-Path $installDir 'gotto-hando.exe'
   if ((& $target --version) -ne '0.1.0') { throw 'installed binary version mismatch' }
-  if ($env:Path -ne [Environment]::GetEnvironmentVariable('Path','Process')) { throw 'PATH changed' }
+  if ($env:Path -ne $pathBefore) { throw 'PATH changed' }
   $old = [IO.File]::ReadAllBytes($target)
+  $proc = Start-Process $target -ArgumentList '--bridge' -PassThru
+  Start-Sleep -Milliseconds 500
+  $failed = $false; try { & $PSScriptRoot\install.ps1 0.1.0 } catch { $failed = $true }
+  Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+  if (-not $failed) { throw 'locked executable replacement was accepted' }
+  if ([Convert]::ToBase64String($old) -ne [Convert]::ToBase64String([IO.File]::ReadAllBytes($target))) { throw 'locked replacement changed existing binary' }
   Remove-Item (Join-Path $assetDir 'SHA256SUMS')
   $failed = $false; try { & $PSScriptRoot\install.ps1 0.1.0 } catch { $failed = $true }
   if (-not $failed) { throw 'missing manifest was accepted' }
