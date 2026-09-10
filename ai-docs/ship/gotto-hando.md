@@ -30,8 +30,8 @@ Public target: GitHub Releases in `kang-sw/gotto-hando`.
 ## Build
 
 - Run `bash scripts/release.sh <version>` to prepare release assets in `dist/`.
-- Produce macOS and Windows binaries for the architecture matrix implemented by
-  that script, plus `install.sh`, `install.ps1`, and `SHA256SUMS`.
+- Produce macOS arm64/amd64 and Windows amd64 binaries, plus `install.sh`,
+  `install.ps1`, `SHA256SUMS`, and `RELEASE-MANIFEST`.
 - Keep checksums and binaries bound to the same exact release version. Installers
   resolve `latest` once and then download version-specific assets.
 - The tag workflow repeats validation and packaging before publication.

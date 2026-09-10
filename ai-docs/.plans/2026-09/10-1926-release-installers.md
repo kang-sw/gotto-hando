@@ -31,9 +31,25 @@
 
 ## Verification Plan
 - `go test ./... -race` plus native CI runs on macOS and Windows.
-- Cross-build `CGO_ENABLED=0 GOOS=darwin GOARCH=arm64|amd64` and `GOOS=windows GOARCH=amd64` (and supported additional Windows architecture), then verify each artifact’s `--version`, archive/file names, and SHA-256 manifest.
+- Cross-build `CGO_ENABLED=0 GOOS=darwin GOARCH=arm64|amd64` and
+  `GOOS=windows GOARCH=amd64`; verify file names and the SHA-256 manifest for all
+  artifacts. Execute `--version` for artifacts on matching available native hosts;
+  distinguish native build/installer evidence from execution of packaged bytes,
+  and report architecture combinations that are cross-build-only.
 - Exercise installer success, checksum mismatch, interrupted download, explicit version, missing PATH, and locked executable cases; verify the original binary remains intact after failures.
 - Inspect workflow permissions and run a dry-run/package-only workflow before the explicit release-publish gate. Confirm no bridge process is killed and no startup/PATH registration is modified.
 
 ## Escalations
 - None.
+
+## CI Findings During Implementation
+
+- Native Windows CI exposed existing failures in local dispatch/version tests,
+  DIB header assertions, CP949 decoding expectations, and capture path separators
+  (run `34467030965`). Diagnose implementation versus test expectations and make
+  the minimal corrections needed for the required native release gate. Do not
+  skip these tests or relax backend behavior merely to obtain a green run.
+- Windows replacement of an in-use executable must fail safely. On macOS an
+  atomic replacement may leave an existing process on its old inode; manual
+  bridge restart guidance is sufficient, without PID scanning or lifecycle
+  management.
