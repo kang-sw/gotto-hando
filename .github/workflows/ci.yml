@@ -15,6 +15,10 @@ jobs:
         with: {go-version-file: go.mod}
       - run: go test ./... -race
       - run: go vet ./...
+      - run: go build -o test-bin.exe ./cmd/gotto-hando
+        if: runner.os == 'Windows'
+      - run: pwsh -NoProfile -File scripts/install_test.ps1 -BinaryPath test-bin.exe
+        if: runner.os == 'Windows'
   package:
     runs-on: macos-latest
     steps:
