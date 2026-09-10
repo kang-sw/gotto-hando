@@ -1,0 +1,35 @@
+name: Release
+on:
+  push:
+    tags: ['v*.*.*']
+permissions:
+  contents: write
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: go.mod}
+      - run: go test ./... -race
+      - run: go vet ./...
+  package:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: go.mod}
+      - run: scripts/release.sh "${GITHUB_REF_NAME#v}" dist
+      - run: cd dist && shasum -a 256 -c SHA256SUMS
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          files: |
+            dist/gotto-hando-*
+            dist/SHA256SUMS
+            dist/RELEASE-MANIFEST
+            dist/install.sh
+            dist/install.ps1
