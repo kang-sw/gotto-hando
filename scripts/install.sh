@@ -27,6 +27,7 @@ chmod 0755 "$TMP/$ASSET"
 STAGE="$(mktemp "$DEST/.gotto-hando.XXXXXX")"
 trap 'rm -rf "$TMP" "$STAGE"' EXIT
 cp "$TMP/$ASSET" "$STAGE"
+chmod 0755 "$STAGE"
 mv -f "$STAGE" "$TARGET"
 echo "installed gotto-hando $VERSION at $TARGET"
 echo "if a bridge is running, restart it manually with: gotto-hando --bridge" >&2

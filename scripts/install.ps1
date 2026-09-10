@@ -23,5 +23,5 @@ try {
   Copy-Item "$tmp\$asset" $stage
   try { Move-Item -Force $stage $target -ErrorAction Stop } catch { Remove-Item $stage -Force -ErrorAction SilentlyContinue; throw "Could not replace $target (it may be locked); original was left unchanged" }
   Write-Host "Installed gotto-hando $Version at $target"
-  if (-not (($env:Path -split ';') -contains $InstallDir)) { Write-Warning "$InstallDir is not on PATH (PATH unchanged); run [Environment]::SetEnvironmentVariable('Path', \"$InstallDir;\" + [Environment]::GetEnvironmentVariable('Path','User'), 'User') if desired" }
+  if (-not (($env:Path -split ';') -contains $InstallDir)) { Write-Warning ($InstallDir + " is not on PATH (PATH unchanged); run [Environment]::SetEnvironmentVariable('Path', '" + $InstallDir + ";' + [Environment]::GetEnvironmentVariable('Path','User'), 'User') if desired") }
 } finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
