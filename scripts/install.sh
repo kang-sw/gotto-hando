@@ -16,14 +16,18 @@ case "$(uname -s):$(uname -m)" in
   *) echo "unsupported platform (macOS arm64/amd64 required)" >&2; exit 2;;
 esac
 BASE="https://github.com/$REPO/releases/download/v$VERSION"
+BASE="${GOTTO_HANDO_BASE_URL:-$BASE}"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 curl --fail --silent --show-error --location "$BASE/$ASSET" -o "$TMP/$ASSET"
 curl --fail --silent --show-error --location "$BASE/SHA256SUMS" -o "$TMP/SHA256SUMS"
-(cd "$TMP" && grep "  $ASSET$" SHA256SUMS | shasum -a 256 -c -)
+(cd "$TMP" && awk -v a="$ASSET" '$2 == a { n++; row=$0 } END { if (n != 1) exit 1; print row }' SHA256SUMS | shasum -a 256 -c -)
 mkdir -p "$DEST"
 TARGET="$DEST/gotto-hando"
 chmod 0755 "$TMP/$ASSET"
-mv -f "$TMP/$ASSET" "$TARGET"
+STAGE="$(mktemp "$DEST/.gotto-hando.XXXXXX")"
+trap 'rm -rf "$TMP" "$STAGE"' EXIT
+cp "$TMP/$ASSET" "$STAGE"
+mv -f "$STAGE" "$TARGET"
 echo "installed gotto-hando $VERSION at $TARGET"
 echo "if a bridge is running, restart it manually with: gotto-hando --bridge" >&2
-case ":${PATH:-}:" in *":$DEST:"*) ;; *) echo "warning: $DEST is not on PATH; add it in your shell profile (PATH unchanged)" >&2;; esac
+case ":${PATH:-}:" in *":$DEST:"*) ;; *) echo "warning: $DEST is not on PATH (PATH unchanged); add \"export PATH=\"\$HOME/.local/bin:\$PATH\"\" to ~/.zshrc or ~/.bashrc" >&2;; esac

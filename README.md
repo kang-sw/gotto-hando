@@ -9,13 +9,13 @@ Download a release asset and verify it against `SHA256SUMS`, or use the
 included installers (they verify before replacing anything):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/kang-sw/gotto-hando/main/scripts/install.sh | bash -s -- 0.1.0
+curl -fsSL https://github.com/kang-sw/gotto-hando/releases/download/v0.1.0/install.sh | bash -s -- 0.1.0
 ```
 
 In PowerShell:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/kang-sw/gotto-hando/main/scripts/install.ps1))) 0.1.0
+& ([scriptblock]::Create((irm https://github.com/kang-sw/gotto-hando/releases/download/v0.1.0/install.ps1))) 0.1.0
 ```
 
 The macOS installer writes `~/.local/bin/gotto-hando`; Windows writes
