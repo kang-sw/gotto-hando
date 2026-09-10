@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/gotto-hando-logo.png" width="720" alt="gotto-hando logo: ゴット ハンド">
+</p>
+
 # gotto-hando
 
 `gotto-hando` drives a macOS or Windows desktop from the shell. Releases are
