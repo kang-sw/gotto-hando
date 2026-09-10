@@ -24,10 +24,10 @@ func TestDIBFromRGBAUsesTopDownBGRA(t *testing.T) {
 	if got := int32(binary.LittleEndian.Uint32(dib[8:])); got != -2 {
 		t.Errorf("height = %d, want -2 (top-down)", got)
 	}
-	if got := binary.LittleEndian.Uint16(dib[14:]); got != 1 {
+	if got := binary.LittleEndian.Uint16(dib[12:]); got != 1 {
 		t.Errorf("planes = %d, want 1", got)
 	}
-	if got := binary.LittleEndian.Uint16(dib[16:]); got != 32 {
+	if got := binary.LittleEndian.Uint16(dib[14:]); got != 32 {
 		t.Errorf("bit count = %d, want 32", got)
 	}
 	if got, want := dib[headerBytes:], []byte{3, 2, 1, 4, 7, 6, 5, 8}; string(got) != string(want) {

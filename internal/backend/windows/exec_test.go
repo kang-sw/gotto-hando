@@ -70,21 +70,27 @@ func TestCappedWriterTruncation(t *testing.T) {
 	}
 }
 
-// TestDecodeCodePageCP949 feeds decodeCodePage a CP949 (Korean) byte
-// fixture with one undecodable byte in the middle, asserting the surrounding
-// text decodes correctly and the bad byte becomes exactly one U+FFFD
-// (help-windows.txt "exec ON WINDOWS": "Undecodable bytes become U+FFFD").
-// 0x68 0x69 is ASCII "hi"; 0x80 is an unassigned CP949 lead byte (invalid
-// standalone); 0xB0 0xA1 is CP949 for U+AC00 ("가"). This proves the
-// short-window fallback correctly re-syncs to a valid double-byte character
-// immediately after a single bad byte, rather than shredding it further.
+// TestDecodeCodePageCP949 checks Windows' CP949 mapping and recovery from
+// invalid sequences (help-windows.txt "exec ON WINDOWS"). Windows maps 0x80
+// to U+0080; 0x81 is a lead byte that is invalid before an ASCII space or at
+// end of input. Recovery must preserve the following ASCII and Korean text.
 func TestDecodeCodePageCP949(t *testing.T) {
 	const cp949 = 949
-	b := []byte{0x68, 0x69, 0x80, 0xB0, 0xA1}
-	got := decodeCodePage(b, cp949)
-	want := "hi\uFFFD\uAC00"
-	if got != want {
-		t.Fatalf("decodeCodePage(%x, cp949) = %q, want %q", b, got, want)
+	cases := []struct {
+		name string
+		b    []byte
+		want string
+	}{
+		{"valid control byte", []byte{0x68, 0x69, 0x80, 0xB0, 0xA1}, "hi\u0080\uAC00"},
+		{"invalid lead before space", []byte{0x68, 0x69, 0x81, 0x20, 0xB0, 0xA1}, "hi\uFFFD \uAC00"},
+		{"incomplete trailing lead", []byte{0x68, 0x69, 0x81}, "hi\uFFFD"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := decodeCodePage(c.b, cp949); got != c.want {
+				t.Fatalf("decodeCodePage(%x, cp949) = %q, want %q", c.b, got, c.want)
+			}
+		})
 	}
 }
 
