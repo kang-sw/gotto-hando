@@ -29,6 +29,7 @@ jobs:
         with: {go-version-file: go.mod}
       - run: scripts/release.sh "${GITHUB_REF_NAME#v}" dist
       - run: cd dist && shasum -a 256 -c SHA256SUMS
+      - run: scripts/install_test.sh
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           files: |

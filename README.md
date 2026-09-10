@@ -32,10 +32,12 @@ Release artifacts include macOS arm64/amd64 and Windows amd64 binaries plus
 `SHA256SUMS`. Updates download into a temporary directory, verify the checksum,
 and replace the destination atomically. A locked executable causes the update
 to fail while preserving the existing file; no process is killed. Remote runs
-require the same version on both machines (`gotto-hando <dest> --version`).
+require the same version on both machines (`ssh <dest> gotto-hando --version`,
+or pass `--remote-bin "$HOME/.local/bin/gotto-hando"` when sshd cannot see
+the per-user install directory).
 
 The embedded first line of `assets/help.txt` is the version source used by
-`--version`; release tooling checks every artifact against the requested
-version. Before 1.0.0, breaking changes advance the minor version and reset
+`--version`; release tooling checks the source version before producing every
+cross-compiled artifact. Before 1.0.0, breaking changes advance the minor version and reset
 patch to zero; non-breaking changes advance patch. Version changes are explicit
 release decisions and are never inferred from commit prefixes.

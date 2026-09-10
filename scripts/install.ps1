@@ -10,8 +10,8 @@ $base = if ($env:GOTTO_HANDO_BASE_URL) { $env:GOTTO_HANDO_BASE_URL.TrimEnd('/') 
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("gotto-hando-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
-  Invoke-WebRequest "$base/$asset" -OutFile "$tmp\$asset"
-  Invoke-WebRequest "$base/SHA256SUMS" -OutFile "$tmp\SHA256SUMS"
+  Invoke-WebRequest "$base/$asset" -UseBasicParsing -OutFile "$tmp\$asset"
+  Invoke-WebRequest "$base/SHA256SUMS" -UseBasicParsing -OutFile "$tmp\SHA256SUMS"
   $rows = @(Get-Content "$tmp\SHA256SUMS" | Where-Object { ($_ -split '\s+', 3)[1] -eq $asset })
   if ($rows.Count -ne 1) { throw "Expected exactly one checksum entry for $asset" }
   $expected = ($rows[0] -split '\s+', 3)[0]
@@ -21,7 +21,7 @@ try {
   $target = Join-Path $InstallDir "gotto-hando.exe"
   $stage = Join-Path $InstallDir (".gotto-hando-" + [guid]::NewGuid() + ".tmp")
   Copy-Item "$tmp\$asset" $stage
-  try { Move-Item -Force $stage $target -ErrorAction Stop } catch { Remove-Item $stage -Force -ErrorAction SilentlyContinue; throw "Could not replace $target (it may be locked); original was left unchanged" }
+  try { if (Test-Path $target) { [IO.File]::Replace($stage, $target, $null) } else { Move-Item $stage $target -ErrorAction Stop } } catch { Remove-Item $stage -Force -ErrorAction SilentlyContinue; throw "Could not replace $target (it may be locked); original was left unchanged" }
   Write-Host "Installed gotto-hando $Version at $target"
   if (-not (($env:Path -split ';') -contains $InstallDir)) { Write-Warning ($InstallDir + " is not on PATH (PATH unchanged); run [Environment]::SetEnvironmentVariable('Path', '" + $InstallDir + ";' + [Environment]::GetEnvironmentVariable('Path','User'), 'User') if desired") }
 } finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
