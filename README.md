@@ -33,7 +33,7 @@ Release artifacts include macOS arm64/amd64 and Windows amd64 binaries plus
 and replace the destination atomically. A locked executable causes the update
 to fail while preserving the existing file; no process is killed. Remote runs
 require the same version on both machines (`ssh <dest> gotto-hando --version`,
-or pass `--remote-bin "$HOME/.local/bin/gotto-hando"` when sshd cannot see
+or pass `--remote-bin /Users/REMOTE_USER/.local/bin/gotto-hando` when sshd cannot see
 the per-user install directory).
 
 The embedded first line of `assets/help.txt` is the version source used by

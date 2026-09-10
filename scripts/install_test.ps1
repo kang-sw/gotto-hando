@@ -1,49 +1,158 @@
-param([Parameter(Mandatory=$true)][string]$BinaryPath)
+param(
+  [Parameter(Mandatory=$true)][string]$BinaryPath,
+  [Parameter(Mandatory=$true)][string]$UpdateBinaryPath,
+  [string]$PythonPath = 'python'
+)
 $ErrorActionPreference = 'Stop'
 $pathBefore = $env:Path
-$root = Join-Path ([IO.Path]::GetTempPath()) ("gotto-hando-test-" + [guid]::NewGuid())
-$assetDir = Join-Path $root 'v0.1.0'
-$installDir = Join-Path $root 'install dir\.local\bin'
-New-Item -ItemType Directory -Force $assetDir | Out-Null
-Copy-Item $BinaryPath (Join-Path $assetDir 'gotto-hando-windows-amd64.exe')
-$hash = (Get-FileHash (Join-Path $assetDir 'gotto-hando-windows-amd64.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
-"$hash  gotto-hando-windows-amd64.exe" | Set-Content (Join-Path $assetDir 'SHA256SUMS') -NoNewline
-$portFile = Join-Path $root 'port'
-$server = Start-Process python -ArgumentList "-u -m http.server 0 --bind 127.0.0.1 --directory `"$root`"" -PassThru -RedirectStandardError (Join-Path $root 'err') -RedirectStandardOutput (Join-Path $root 'out')
+$oldInstallDir = $env:GOTTO_HANDO_INSTALL_DIR
+$oldBase = $env:GOTTO_HANDO_BASE_URL
+$root = Join-Path ([IO.Path]::GetTempPath()) ('gotto-hando-test-' + [guid]::NewGuid())
+$installDir = Join-Path $root "install dir's\.local\bin"
+$asset = 'gotto-hando-windows-amd64.exe'
+$releases = Join-Path $root 'github\kang-sw\gotto-hando\releases\download'
+$api = Join-Path $root 'api\repos\kang-sw\gotto-hando\releases'
+$installer = Join-Path $PSScriptRoot 'install.ps1'
+$requests = New-Object 'System.Collections.Generic.List[string]'
+$server = $null
+$lockedProcess = $null
+function Assert-True($condition, [string]$message) { if (-not $condition) { throw $message } }
+function Hash([string]$path) { (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash }
+# Keep real HTTP transport while redirecting the exact production URLs locally.
+function Invoke-RestMethod([string]$Uri) {
+  $requests.Add($Uri)
+  Assert-True ($Uri.StartsWith('https://api.github.com/')) 'unexpected API URL'
+  Microsoft.PowerShell.Utility\Invoke-RestMethod ($Uri.Replace('https://api.github.com', "$origin/api"))
+}
+function Invoke-WebRequest([string]$Uri, [switch]$UseBasicParsing, [string]$OutFile) {
+  $requests.Add($Uri)
+  Assert-True ($Uri.StartsWith('https://github.com/')) 'unexpected asset URL'
+  Microsoft.PowerShell.Utility\Invoke-WebRequest ($Uri.Replace('https://github.com', "$origin/github")) -UseBasicParsing -OutFile $OutFile
+}
+function Install([string]$version = '') {
+  $arguments = @(); if ($version) { $arguments += $version }
+  $output = (& $installer @arguments 3>&1 6>&1 | Out-String -Width 4096)
+  Assert-True ($env:Path -eq $pathBefore) 'PATH changed'
+  return $output
+}
+function Assert-Preserved {
+  Assert-True ((Hash $target) -eq $oldHash) 'failed install changed existing bytes'
+  Assert-True ($env:Path -eq $pathBefore) 'PATH changed'
+  Assert-True (@(Get-ChildItem -LiteralPath $installDir -Filter '.gotto-hando-*').Count -eq 0) 'staged file leaked'
+}
+function Expect-Failure {
+  $failed = $false
+  try { Install '0.1.1' | Out-Null } catch { $failed = $true }
+  Assert-True $failed 'unexpected installation success'
+  Assert-Preserved
+}
 try {
-  for ($i=0; $i -lt 50; $i++) {
-    Start-Sleep -Milliseconds 100
-    $line = Get-Content (Join-Path $root 'out') -ErrorAction SilentlyContinue | Select-String 'port ([0-9]+)'
-    if ($line) { $port = [int]$line.Matches[0].Groups[1].Value; break }
+  foreach ($version in @('0.1.0', '0.1.1')) {
+    $dir = Join-Path $releases "v$version"
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    Copy-Item -LiteralPath $BinaryPath -Destination (Join-Path $dir $asset)
   }
-  if (-not $port) { throw 'local HTTP server did not start' }
-  $env:GOTTO_HANDO_BASE_URL = "http://127.0.0.1:$port/v0.1.0"
+  $current = Join-Path $releases 'v0.1.1'
+  Copy-Item -LiteralPath $UpdateBinaryPath -Destination (Join-Path $current $asset) -Force
+  Assert-True ((Hash $BinaryPath) -ne (Hash $UpdateBinaryPath)) 'update fixture must have distinct executable bytes'
+  foreach ($version in @('0.1.0', '0.1.1')) {
+    $dir = Join-Path $releases "v$version"
+    ((Hash (Join-Path $dir $asset)) + "  $asset") | Set-Content (Join-Path $dir 'SHA256SUMS')
+  }
+  New-Item -ItemType Directory -Force $api | Out-Null
+  '{"tag_name":"v0.1.1"}' | Set-Content (Join-Path $api 'latest')
+  $portFile = Join-Path $root 'port'
+  $serverScript = Join-Path $PSScriptRoot 'testdata\install_server.py'
+  $server = Start-Process $PythonPath -ArgumentList "`"$serverScript`" `"$root`" `"$portFile`"" -PassThru -RedirectStandardOutput (Join-Path $root 'server.log') -RedirectStandardError (Join-Path $root 'server-error.log')
+  for ($i=0; $i -lt 100; $i++) {
+    Start-Sleep -Milliseconds 100
+    if (Test-Path $portFile) { break }
+    Assert-True (-not $server.HasExited) 'HTTP fixture exited before readiness'
+  }
+  Assert-True (Test-Path $portFile) 'HTTP fixture did not become ready'
+  $origin = 'http://127.0.0.1:' + (Get-Content $portFile)
   $env:GOTTO_HANDO_INSTALL_DIR = $installDir
-  & $PSScriptRoot\install.ps1 0.1.0
-  $target = Join-Path $installDir 'gotto-hando.exe'
-  if ((& $target --version) -ne '0.1.0') { throw 'installed binary version mismatch' }
-  if ($env:Path -ne $pathBefore) { throw 'PATH changed' }
-  $old = [IO.File]::ReadAllBytes($target)
-  $proc = Start-Process $target -ArgumentList '--bridge' -PassThru
-  Start-Sleep -Milliseconds 500
-  $failed = $false; try { & $PSScriptRoot\install.ps1 0.1.0 } catch { $failed = $true }
-  Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-  if (-not $failed) { throw 'locked executable replacement was accepted' }
-  if ([Convert]::ToBase64String($old) -ne [Convert]::ToBase64String([IO.File]::ReadAllBytes($target))) { throw 'locked replacement changed existing binary' }
-  Remove-Item (Join-Path $assetDir 'SHA256SUMS')
-  $failed = $false; try { & $PSScriptRoot\install.ps1 0.1.0 } catch { $failed = $true }
-  if (-not $failed) { throw 'missing manifest was accepted' }
-  "$hash  gotto-hando-windows-amd64.exe" | Set-Content (Join-Path $assetDir 'SHA256SUMS') -NoNewline
-  Add-Content (Join-Path $assetDir 'gotto-hando-windows-amd64.exe') 'tampered'
-  $failed = $false; try { & $PSScriptRoot\install.ps1 0.1.0 } catch { $failed = $true }
-  if (-not $failed) { throw 'checksum mismatch was accepted' }
-  if ([Convert]::ToBase64String($old) -ne [Convert]::ToBase64String([IO.File]::ReadAllBytes($target))) { throw 'checksum failure replaced existing binary' }
-  Add-Content (Join-Path $assetDir 'SHA256SUMS') "`n$hash  gotto-hando-windows-amd64.exe"
-  $failed = $false; try { & $PSScriptRoot\install.ps1 0.1.0 } catch { $failed = $true }
-  if (-not $failed) { throw 'duplicate checksum was accepted' }
-  Write-Host 'PowerShell installer fixture tests passed'
-} finally {
-  if ($server) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
   Remove-Item Env:GOTTO_HANDO_BASE_URL -ErrorAction SilentlyContinue
-  Remove-Item Env:GOTTO_HANDO_INSTALL_DIR -ErrorAction SilentlyContinue
+  $output = Install 'v0.1.0'
+  $target = Join-Path $installDir 'gotto-hando.exe'
+  Assert-True ((Hash $target) -eq (Hash (Join-Path $releases "v0.1.0\$asset"))) 'fresh installation bytes mismatch'
+  Assert-True ((& $target --version) -eq '0.1.0') 'fresh executable cannot run'
+  Assert-True ($output.Contains('PATH unchanged')) 'PATH warning missing'
+  Assert-True ($output.Contains($installDir.Replace("'", "''") + ";'")) 'PATH guidance does not quote actual destination'
+  Install '0.1.1' | Out-Null
+  $oldHash = Hash $target
+  Assert-True ($oldHash -eq (Hash (Join-Path $current $asset))) 'successful update bytes mismatch'
+  foreach ($mode in @('', 'latest')) {
+    $requests.Clear()
+    Install $mode | Out-Null
+    Assert-True (@($requests | Where-Object { $_ -eq 'https://api.github.com/repos/kang-sw/gotto-hando/releases/latest' }).Count -eq 1) 'latest did not resolve exactly once'
+    Assert-True (@($requests | Where-Object { $_ -eq "https://github.com/kang-sw/gotto-hando/releases/download/v0.1.1/$asset" }).Count -eq 1) 'binary URL not pinned to resolved version'
+    Assert-True (@($requests | Where-Object { $_ -eq 'https://github.com/kang-sw/gotto-hando/releases/download/v0.1.1/SHA256SUMS' }).Count -eq 1) 'manifest URL not pinned to resolved version'
+    Assert-Preserved
+  }
+  $oldBytes = [IO.File]::ReadAllBytes((Join-Path $current $asset))
+  $manifest = Get-Content (Join-Path $current 'SHA256SUMS') -Raw
+  Add-Content (Join-Path $current $asset) 'tampered'; Expect-Failure
+  [IO.File]::WriteAllBytes((Join-Path $current $asset), $oldBytes)
+  ($manifest + $manifest) | Set-Content (Join-Path $current 'SHA256SUMS'); Expect-Failure
+  ('0' * 64 + '  wrong-asset') | Set-Content (Join-Path $current 'SHA256SUMS'); Expect-Failure
+  Remove-Item (Join-Path $current 'SHA256SUMS'); Expect-Failure
+  $manifest | Set-Content (Join-Path $current 'SHA256SUMS')
+  Move-Item (Join-Path $current $asset) (Join-Path $root 'asset'); Expect-Failure
+  Move-Item (Join-Path $root 'asset') (Join-Path $current $asset)
+  $asset | Set-Content (Join-Path $root 'truncate'); Expect-Failure
+  Remove-Item (Join-Path $root 'truncate')
+  # A running image may allow atomic replacement. Never terminate it to update.
+  $lockedProcess = Start-Process $target -ArgumentList "local --out `"$root\run`" sleep[]60000" -PassThru
+  Start-Sleep -Milliseconds 500
+  Assert-True (-not $lockedProcess.HasExited) 'running fixture exited too early'
+  $replaced = $true
+  try { Install '0.1.0' | Out-Null } catch { $replaced = $false }
+  Assert-True (-not $lockedProcess.HasExited) 'installer killed the running fixture'
+  if ($replaced) {
+    Assert-True ((Hash $target) -eq (Hash $BinaryPath)) 'atomic replacement bytes mismatch'
+    Assert-True ((& $target --version) -eq '0.1.0') 'replacement executable cannot run'
+  } else { Assert-Preserved }
+  Stop-Process -Id $lockedProcess.Id -Force
+  $lockedProcess.WaitForExit()
+  $lockedProcess = $null
+  Install '0.1.1' | Out-Null
+  Assert-Preserved
+
+  # A separate owned process holds a true exclusive lock that denies replacement.
+  $ready = Join-Path $root 'lock-ready'
+  $holderCode = @'
+$stream = [IO.File]::Open('__TARGET__', [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+try { [IO.File]::WriteAllText('__READY__', 'ready'); Start-Sleep -Seconds 60 } finally { $stream.Dispose() }
+'@
+  $holderCode = $holderCode.Replace('__TARGET__', $target.Replace("'", "''")).Replace('__READY__', $ready.Replace("'", "''"))
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($holderCode))
+  $lockedProcess = Start-Process (Join-Path $PSHOME 'powershell.exe') -ArgumentList "-NoProfile -EncodedCommand $encoded" -PassThru
+  for ($i=0; $i -lt 100; $i++) {
+    Start-Sleep -Milliseconds 100
+    if (Test-Path $ready) { break }
+    Assert-True (-not $lockedProcess.HasExited) 'exclusive-lock holder exited early'
+  }
+  Assert-True (Test-Path $ready) 'exclusive-lock holder not ready'
+  $failed = $false
+  try { Install '0.1.1' | Out-Null } catch { $failed = $true }
+  Assert-True $failed 'exclusively locked replacement was accepted'
+  Assert-True (-not $lockedProcess.HasExited) 'installer killed the lock holder'
+  Stop-Process -Id $lockedProcess.Id -Force
+  $lockedProcess.WaitForExit()
+  $lockedProcess = $null
+  Assert-Preserved
+  Remove-Item $target
+  New-Item -ItemType Directory $target | Out-Null
+  'keep' | Set-Content (Join-Path $target 'sentinel')
+  $failed = $false; try { Install '0.1.1' | Out-Null } catch { $failed = $true }
+  Assert-True $failed 'target directory was accepted'
+  Assert-True ((Get-Content (Join-Path $target 'sentinel')) -eq 'keep') 'target directory contents changed'
+  Write-Host 'Windows installer fixtures passed: install/update/latest/checksum/duplicate/missing/interrupted/locked/directory/PATH'
+} finally {
+  if ($lockedProcess -and -not $lockedProcess.HasExited) { Stop-Process -Id $lockedProcess.Id -Force }
+  if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+  $env:GOTTO_HANDO_INSTALL_DIR = $oldInstallDir
+  $env:GOTTO_HANDO_BASE_URL = $oldBase
+  Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 }

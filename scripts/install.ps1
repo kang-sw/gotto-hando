@@ -19,9 +19,12 @@ try {
   if ($actual -ne $expected.ToLowerInvariant()) { throw "Checksum mismatch for $asset" }
   New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
   $target = Join-Path $InstallDir "gotto-hando.exe"
+  if (Test-Path $target -PathType Container) { throw "Installation target is a directory: $target" }
   $stage = Join-Path $InstallDir (".gotto-hando-" + [guid]::NewGuid() + ".tmp")
   Copy-Item "$tmp\$asset" $stage
-  try { if (Test-Path $target) { [IO.File]::Replace($stage, $target, $null) } else { Move-Item $stage $target -ErrorAction Stop } } catch { Remove-Item $stage -Force -ErrorAction SilentlyContinue; throw "Could not replace $target (it may be locked); original was left unchanged" }
+  # PowerShell 5.1 coerces $null to an empty string; File.Replace needs a null backup path.
+  try { if (Test-Path $target) { [IO.File]::Replace($stage, $target, [System.Management.Automation.Language.NullString]::Value) } else { Move-Item $stage $target -ErrorAction Stop } } catch { Remove-Item $stage -Force -ErrorAction SilentlyContinue; throw "Could not replace $target (it may be locked); original was left unchanged. Close the running program and rerun the installer." }
   Write-Host "Installed gotto-hando $Version at $target"
-  if (-not (($env:Path -split ';') -contains $InstallDir)) { Write-Warning ($InstallDir + " is not on PATH (PATH unchanged); run [Environment]::SetEnvironmentVariable('Path', '" + $InstallDir + ";' + [Environment]::GetEnvironmentVariable('Path','User'), 'User') if desired") }
+  Write-Host "If a bridge is running, restart it manually with: gotto-hando --bridge"
+  if (-not (($env:Path -split ';') -contains $InstallDir)) { Write-Warning ($InstallDir + " is not on PATH (PATH unchanged); run [Environment]::SetEnvironmentVariable('Path', '" + $InstallDir.Replace("'", "''") + ";' + [Environment]::GetEnvironmentVariable('Path','User'), 'User') if desired") }
 } finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }

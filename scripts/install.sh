@@ -23,6 +23,7 @@ curl --fail --silent --show-error --location "$BASE/SHA256SUMS" -o "$TMP/SHA256S
 (cd "$TMP" && awk -v a="$ASSET" '$2 == a { n++; row=$0 } END { if (n != 1) exit 1; print row }' SHA256SUMS | shasum -a 256 -c -)
 mkdir -p "$DEST"
 TARGET="$DEST/gotto-hando"
+[[ ! -d "$TARGET" ]] || { echo "installation target is a directory: $TARGET" >&2; exit 1; }
 chmod 0755 "$TMP/$ASSET"
 STAGE="$(mktemp "$DEST/.gotto-hando.XXXXXX")"
 trap 'rm -rf "$TMP" "$STAGE"' EXIT
@@ -31,4 +32,10 @@ chmod 0755 "$STAGE"
 mv -f "$STAGE" "$TARGET"
 echo "installed gotto-hando $VERSION at $TARGET"
 echo "if a bridge is running, restart it manually with: gotto-hando --bridge" >&2
-case ":${PATH:-}:" in *":$DEST:"*) ;; *) echo "warning: $DEST is not on PATH (PATH unchanged); add \"export PATH=\"\$HOME/.local/bin:\$PATH\"\" to ~/.zshrc or ~/.bashrc" >&2;; esac
+case ":${PATH:-}:" in
+  *":$DEST:"*) ;;
+  *)
+    printf 'warning: %s is not on PATH (PATH unchanged); add this to ~/.zshrc or ~/.bashrc:\n' "$DEST" >&2
+    printf 'export PATH=%q:"$PATH"\n' "$DEST" >&2
+    ;;
+esac

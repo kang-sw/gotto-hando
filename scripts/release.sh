@@ -30,6 +30,17 @@ build_one darwin arm64 darwin-arm64
 build_one darwin amd64 darwin-amd64
 build_one windows amd64 windows-amd64
 
+# Execute the artifact matching this host; the other targets are cross-builds.
+case "$(uname -s):$(uname -m)" in
+  Darwin:arm64) NATIVE_ASSET=gotto-hando-darwin-arm64;;
+  Darwin:x86_64) NATIVE_ASSET=gotto-hando-darwin-amd64;;
+  *) NATIVE_ASSET="";;
+esac
+if [[ -n "$NATIVE_ASSET" ]]; then
+  ACTUAL_VERSION="$("$OUT_DIR/$NATIVE_ASSET" --version)"
+  [[ "$ACTUAL_VERSION" == "$VERSION" ]] || { echo "$NATIVE_ASSET reports $ACTUAL_VERSION, expected $VERSION" >&2; exit 1; }
+fi
+
 cp scripts/install.sh scripts/install.ps1 "$OUT_DIR/"
 (cd "$OUT_DIR" && shasum -a 256 gotto-hando-* install.sh install.ps1 > SHA256SUMS)
 {

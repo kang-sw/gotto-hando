@@ -14,7 +14,8 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with: {go-version-file: go.mod}
       - run: go test ./... -race
-      - run: go vet ./...
+      - run: scripts/vet.sh
+        shell: bash
   package:
     runs-on: macos-latest
     steps:
@@ -33,4 +34,5 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with: {go-version-file: go.mod}
       - run: go build -o test-bin.exe ./cmd/gotto-hando
-      - run: powershell -NoProfile -File scripts/install_test.ps1 -BinaryPath test-bin.exe
+      - run: go build -ldflags "-buildid=installer-fixture-update" -o test-update-bin.exe ./cmd/gotto-hando
+      - run: powershell -NoProfile -File scripts/install_test.ps1 -BinaryPath test-bin.exe -UpdateBinaryPath test-update-bin.exe
