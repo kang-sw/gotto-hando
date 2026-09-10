@@ -24,3 +24,4 @@ jobs:
         with: {go-version-file: go.mod}
       - run: scripts/release.sh "$(sed -n '1s/^gotto-hando \([^ ]*\).*/\1/p' assets/help.txt)" ci-dist
       - run: cd ci-dist && shasum -a 256 -c SHA256SUMS
+      - run: scripts/install_test.sh
