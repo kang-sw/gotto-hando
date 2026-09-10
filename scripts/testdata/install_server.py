@@ -2,6 +2,7 @@
 import functools
 import http.server
 import pathlib
+import socketserver
 import sys
 
 root, port_file = map(pathlib.Path, sys.argv[1:])
@@ -27,6 +28,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return super().guess_type(path)
 
 
-with http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Handler, directory=str(root))) as server:
+class LoopbackServer(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer's reverse DNS lookup can stall on hosted macOS runners.
+        # This fixture only serves literal loopback URLs and needs no lookup.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = 'localhost'
+        self.server_port = self.server_address[1]
+
+
+with LoopbackServer(('127.0.0.1', 0), functools.partial(Handler, directory=str(root))) as server:
     port_file.write_text(str(server.server_port))
     server.serve_forever()
