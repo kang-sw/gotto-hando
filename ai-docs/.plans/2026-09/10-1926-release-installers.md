@@ -9,7 +9,9 @@
 
 ## Out of Scope
 - Automatic startup registration, PATH mutation, package-manager publication, protocol changes, code-signing/notarization policy changes, or release publication during implementation.
-- No installer behavior that replaces a running executable in place without a safe lock/failure check.
+- Do not truncate or overwrite a running executable in place. Use atomic
+  replacement where the OS permits it; a denied replacement must preserve the
+  existing file. Do not scan for or terminate running processes.
 
 ## Codebase Findings
 - `Makefile#L1-L23` — only local `CGO_ENABLED=0` build/sign/test helpers exist; no release, archive, checksum, or cross-build target.
@@ -49,7 +51,8 @@
   (run `34467030965`). Diagnose implementation versus test expectations and make
   the minimal corrections needed for the required native release gate. Do not
   skip these tests or relax backend behavior merely to obtain a green run.
-- Windows replacement of an in-use executable must fail safely. On macOS an
-  atomic replacement may leave an existing process on its old inode; manual
-  bridge restart guidance is sufficient, without PID scanning or lifecycle
-  management.
+- A genuinely denied Windows replacement must fail safely. Both platforms may
+  permit atomic replacement while an existing process keeps its old image;
+  manual bridge restart guidance is sufficient, without PID scanning or
+  lifecycle management. Test deterministic denial separately from an executable
+  that the OS permits renaming while running.
