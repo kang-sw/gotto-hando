@@ -2,7 +2,7 @@ param([Parameter(Mandatory=$true)][string]$BinaryPath)
 $ErrorActionPreference = 'Stop'
 $root = Join-Path ([IO.Path]::GetTempPath()) ("gotto-hando-test-" + [guid]::NewGuid())
 $assetDir = Join-Path $root 'v0.1.0'
-$installDir = Join-Path $root 'install\.local\bin'
+$installDir = Join-Path $root 'install dir\.local\bin'
 New-Item -ItemType Directory -Force $assetDir | Out-Null
 Copy-Item $BinaryPath (Join-Path $assetDir 'gotto-hando-windows-amd64.exe')
 $hash = (Get-FileHash (Join-Path $assetDir 'gotto-hando-windows-amd64.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -21,7 +21,12 @@ try {
   & $PSScriptRoot\install.ps1 0.1.0
   $target = Join-Path $installDir 'gotto-hando.exe'
   if ((& $target --version) -ne '0.1.0') { throw 'installed binary version mismatch' }
+  if ($env:Path -ne [Environment]::GetEnvironmentVariable('Path','Process')) { throw 'PATH changed' }
   $old = [IO.File]::ReadAllBytes($target)
+  Remove-Item (Join-Path $assetDir 'SHA256SUMS')
+  $failed = $false; try { & $PSScriptRoot\install.ps1 0.1.0 } catch { $failed = $true }
+  if (-not $failed) { throw 'missing manifest was accepted' }
+  "$hash  gotto-hando-windows-amd64.exe" | Set-Content (Join-Path $assetDir 'SHA256SUMS') -NoNewline
   Add-Content (Join-Path $assetDir 'gotto-hando-windows-amd64.exe') 'tampered'
   $failed = $false; try { & $PSScriptRoot\install.ps1 0.1.0 } catch { $failed = $true }
   if (-not $failed) { throw 'checksum mismatch was accepted' }

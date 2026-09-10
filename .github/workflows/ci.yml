@@ -15,10 +15,6 @@ jobs:
         with: {go-version-file: go.mod}
       - run: go test ./... -race
       - run: go vet ./...
-      - run: go build -o test-bin.exe ./cmd/gotto-hando
-        if: runner.os == 'Windows'
-      - run: pwsh -NoProfile -File scripts/install_test.ps1 -BinaryPath test-bin.exe
-        if: runner.os == 'Windows'
   package:
     runs-on: macos-latest
     steps:
@@ -29,3 +25,12 @@ jobs:
       - run: scripts/release.sh "$(sed -n '1s/^gotto-hando \([^ ]*\).*/\1/p' assets/help.txt)" ci-dist
       - run: cd ci-dist && shasum -a 256 -c SHA256SUMS
       - run: scripts/install_test.sh
+  installer-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: git config core.autocrlf false; git restore --source=HEAD --worktree -- .
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: go.mod}
+      - run: go build -o test-bin.exe ./cmd/gotto-hando
+      - run: powershell -NoProfile -File scripts/install_test.ps1 -BinaryPath test-bin.exe
