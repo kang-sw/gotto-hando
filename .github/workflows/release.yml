@@ -41,6 +41,7 @@ jobs:
             dist/install.ps1
   installer-windows:
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - run: git config core.autocrlf false; git restore --source=HEAD --worktree -- .
