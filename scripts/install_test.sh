@@ -4,7 +4,17 @@ ROOT="$(mktemp -d)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="$ROOT/install dir/.local/bin"
 SERVER=""
-cleanup() { if [[ -n "$SERVER" ]]; then kill "$SERVER" 2>/dev/null || true; wait "$SERVER" 2>/dev/null || true; fi; rm -rf "$ROOT"; }
+cleanup() {
+  status=$?
+  if [[ "$status" != 0 ]]; then
+    echo "installer fixture failed (exit $status); last installer output:" >&2
+    [[ ! -f "$ROOT/output" ]] || cat "$ROOT/output" >&2
+    [[ ! -f "$ROOT/server.log" ]] || cat "$ROOT/server.log" >&2
+  fi
+  if [[ -n "$SERVER" ]]; then kill "$SERVER" 2>/dev/null || true; wait "$SERVER" 2>/dev/null || true; fi
+  rm -rf "$ROOT"
+}
+trap 'echo "installer fixture failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 trap cleanup EXIT
 case "$(uname -m)" in arm64) ASSET=gotto-hando-darwin-arm64;; x86_64) ASSET=gotto-hando-darwin-amd64;; *) exit 2;; esac
 RELEASES="$ROOT/github/kang-sw/gotto-hando/releases/download"
