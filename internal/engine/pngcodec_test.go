@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"image/png"
+	"path/filepath"
 	"testing"
 
 	"github.com/kang-sw/gotto-hando/internal/backend"
@@ -73,16 +74,17 @@ func TestEncodePNGRejectsMalformed(t *testing.T) {
 // extension for a burst).
 func TestCapturePathAutomaticAndExplicit(t *testing.T) {
 	const ts = "20260907T131502.114Z"
+	outDir := filepath.Join(t.TempDir(), "captures")
 	cases := []struct {
 		name                 string
 		out, explicit, label string
 		seq, index, n        int
 		want                 string
 	}{
-		{"automatic single", "/tmp/gh", "", "cap", 0, 0, 1, "/tmp/gh/0000-cap-" + ts + ".png"},
-		{"automatic burst", "/tmp/gh", "", "orbit", 3, 1, 5, "/tmp/gh/0003-orbit-" + ts + "-01.png"},
-		{"explicit single", "/tmp/gh", "./shot.png", "cap", 0, 0, 1, "./shot.png"},
-		{"explicit burst", "/tmp/gh", "./shot.png", "cap", 0, 2, 3, "./shot-02.png"},
+		{"automatic single", outDir, "", "cap", 0, 0, 1, filepath.Join(outDir, "0000-cap-"+ts+".png")},
+		{"automatic burst", outDir, "", "orbit", 3, 1, 5, filepath.Join(outDir, "0003-orbit-"+ts+"-01.png")},
+		{"explicit single", outDir, "./shot.png", "cap", 0, 0, 1, "./shot.png"},
+		{"explicit burst", outDir, "./shot.png", "cap", 0, 2, 3, "./shot-02.png"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -1,0 +1,52 @@
+name: Release
+on:
+  push:
+    tags: ['v*.*.*']
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: git config core.autocrlf false; git restore --source=HEAD --worktree -- .
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: go.mod}
+      - run: go test ./... -race
+      - run: scripts/vet.sh
+        shell: bash
+  package:
+    needs: [test, installer-windows]
+    permissions:
+      contents: write
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: git config core.autocrlf false; git restore --source=HEAD --worktree -- .
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: go.mod}
+      - run: scripts/release.sh "${GITHUB_REF_NAME#v}" dist
+      - run: cd dist && shasum -a 256 -c SHA256SUMS
+      - run: scripts/install_test.sh
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          files: |
+            dist/gotto-hando-*
+            dist/SHA256SUMS
+            dist/RELEASE-MANIFEST
+            dist/install.sh
+            dist/install.ps1
+  installer-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: git config core.autocrlf false; git restore --source=HEAD --worktree -- .
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with: {go-version-file: go.mod}
+      - run: go build -o test-bin.exe ./cmd/gotto-hando
+      - run: go build -ldflags "-buildid=installer-fixture-update" -o test-update-bin.exe ./cmd/gotto-hando
+      - run: powershell -NoProfile -File scripts/install_test.ps1 -BinaryPath test-bin.exe -UpdateBinaryPath test-update-bin.exe

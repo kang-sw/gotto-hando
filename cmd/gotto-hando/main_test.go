@@ -298,13 +298,11 @@ func TestNotImplementedOptionsExitTwo(t *testing.T) {
 }
 
 // TestLocalDestDispatch covers dispatch.go's dest=="local" path
-// (260907-feat-darwin-backend Phase 1, dispatch.go step 10): on darwin it
-// now runs for real through the darwin backend; on every other GOOS
-// dispatch_other.go's newLocalBackend stub still aborts E_VALIDATE with
-// the same message the pre-Phase-1 stub printed.
+// through the native backend on darwin and windows. Other platforms use
+// dispatch_other.go's newLocalBackend stub and abort with E_VALIDATE.
 func TestLocalDestDispatch(t *testing.T) {
 	out, errOut, code := runBin(t, "", "local")
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		if code != 2 {
 			t.Fatalf("exit = %d, want 2 (stderr=%q)", code, errOut)
 		}
@@ -314,9 +312,8 @@ func TestLocalDestDispatch(t *testing.T) {
 		}
 		return
 	}
-	// darwin: a run with zero lines never touches Preflight's session/
-	// permission checks (help-macos.txt CHECK: an empty run has nothing to
-	// fail on, same rule as the qinfo/qdisp/qmouse/sleep/set exemption) -
+	// Supported platforms: a run with zero lines never touches Preflight's
+	// session/permission checks: an empty run has nothing to fail on -
 	// it always completes with a normal, empty done line, regardless of
 	// the GUI session's lock state.
 	if code != 0 {
@@ -369,7 +366,7 @@ func TestExpectVersionMismatch(t *testing.T) {
 // test flaky/environment-dependent).
 func TestExpectVersionMatch(t *testing.T) {
 	out, errOut, code := runBin(t, "", "--expect-version", "0.1.0", "local")
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		if code != 2 {
 			t.Fatalf("exit = %d, want 2 (stderr=%q)", code, errOut)
 		}
