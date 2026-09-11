@@ -1,4 +1,4 @@
-gotto-hando 0.1.0 - drive a macOS/Windows desktop from the shell, one command
+gotto-hando 0.1.1 - drive a macOS/Windows desktop from the shell, one command
 per line.
 
 This text is the complete, normative manual for USING the tool. Platform
