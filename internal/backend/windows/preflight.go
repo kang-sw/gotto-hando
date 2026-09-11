@@ -114,11 +114,9 @@ func (b *Backend) Preflight(ctx context.Context, seq *ir.Sequence) error {
 }
 
 // RequiresSession reports whether seq contains any op outside
-// exemptFromSession - the same exempt-kind check Preflight's check 1 uses,
-// exported so cmd/gotto-hando's `local` dispatch can make the identical
-// forward-vs-in-process routing decision (260908-feat-remote-ssh Phase 0,
-// shouldForwardToBridge) from one source of truth instead of re-deriving
-// the kind list.
+// exemptFromSession. It is the single source of truth for Preflight check 1;
+// bridge routing deliberately does not use it because remote diagnostics must
+// observe the bridge's GUI session too.
 func RequiresSession(seq *ir.Sequence) bool {
 	for i := range seq.Ops {
 		if !exemptFromSession[seq.Ops[i].Kind] {

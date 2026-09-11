@@ -18,6 +18,16 @@ captures only what the code cannot make obvious on its own.
 
 ## Domain Rules
 
+- **Every run detected as remote must use the GUI-session bridge, including
+  `qinfo`, `qdisp`, and `qmouse`.** The backend `RequiresSession` predicate is
+  only a preflight gate: it lets diagnostics report a locked or inactive local
+  session without aborting. Reusing it as a transport predicate makes a
+  query-only SSH run observe the ssh-side process while a later GUI run
+  observes the bridge, producing different session, display, elevation, and
+  pointer data. Keep `shouldForwardToBridge` based solely on remote-session
+  detection so diagnostics describe the same execution context as desktop
+  operations and `--ping` really checks bridge reachability.
+
 - **`rclip` carries an executor-owned path across every forwarding boundary;
   its loader must prove the opened object is a bounded regular file before
   reading it.** `syntax.Inline` and `internal/remote.Rewrite` may read and

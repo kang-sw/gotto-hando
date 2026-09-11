@@ -447,8 +447,9 @@ grep for it.
       input and capture; bridge = this process was started by ssh and the
       answer came through the GUI session's `gotto-hando --bridge` - runs
       work; locked = lock screen, screen saver or UAC secure desktop;
-      inactive = not a GUI session (ssh-started, Windows session 0 or a
-      disconnected RDP session) and no bridge running: nothing can run.
+      inactive = this process is not in a usable GUI session (ssh-started,
+      Windows session 0 or a disconnected RDP session). A normal <dest>
+      run is answered through its bridge; no bridge = E_SESSION.
       Anything but ok/active/bridge: --help-macos / --help-windows.
   qdisp
       One line per display: idx, origin, size, scale, primary (OUTPUT).

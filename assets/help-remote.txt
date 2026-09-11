@@ -3,9 +3,9 @@ wrapper, the session bridge, remote setup, quoting, troubleshooting.
 
 == WHEN YOU NEED THIS ==
   You want to drive a PC other than `local`; a run exited 3 (E_CONNECT);
-  `gotto-hando <dest> qinfo` shows session=inactive (bridge not running) or
-  perms=...:missing while the same command works in a terminal on that
-  machine.
+  `gotto-hando <dest> qinfo` exits 4 with E_SESSION (bridge not running) or
+  shows perms=...:missing while the same command works in a terminal on
+  that machine.
 
 == SECURITY MODEL (READ FIRST) ==
   gotto-hando opens NO network listener, on either side, ever. There is no

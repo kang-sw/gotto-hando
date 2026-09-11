@@ -116,15 +116,14 @@ func openBridgeLog(stderr io.Writer) (logLine func(string), closeFn func()) {
 }
 
 // shouldForwardToBridge is windows's half of dispatch.go's per-GOOS
-// forwarding seam (help-remote.txt SESSION BRIDGE "Detection"): a
-// non-console session (ssh, RDP-without-console, a service) running a
-// sequence that actually needs the interactive desktop forwards to
-// `gotto-hando --bridge` instead of touching the real local backend
-// directly - IsRemoteSession alone is not enough, since an all-exempt
-// sequence (e.g. a lone qinfo/qclip) never needs the bridge at all
-// (RequiresSession mirrors backend/windows/preflight.go's own gate).
-func shouldForwardToBridge(seq *ir.Sequence) bool {
-	return winbackend.IsRemoteSession() && winbackend.RequiresSession(seq)
+// forwarding seam (help-remote.txt SESSION BRIDGE "Detection"): every run
+// from a non-console session (ssh, RDP-without-console, a service) goes to
+// `gotto-hando --bridge`. Query-only runs must take this path too: qinfo,
+// qdisp and qmouse describe the desktop that later GUI operations use, not
+// the ssh-side Session 0 process. Session exemptions remain a Preflight
+// policy only; they must not decide transport routing.
+func shouldForwardToBridge(_ *ir.Sequence) bool {
+	return winbackend.IsRemoteSession()
 }
 
 // dialBridge is a seam over winbackend.DialBridge so tests can substitute

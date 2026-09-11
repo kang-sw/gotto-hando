@@ -172,15 +172,13 @@ func openBridgeLog(stderr io.Writer) (logLine func(string), closeFn func()) {
 
 // shouldForwardToBridge is darwin's half of dispatch.go's per-GOOS
 // forwarding seam (help-remote.txt SESSION BRIDGE "Detection",
-// 260908-feat-remote-ssh Phase 2): an ssh-started process running a
-// sequence that actually needs the interactive GUI session forwards to
-// `gotto-hando --bridge` instead of touching the real local backend
-// directly - darwin.IsRemoteSession alone is not enough, since an
-// all-exempt sequence (e.g. a lone qinfo/qclip) never needs the bridge at
-// all (darwin.RequiresSession mirrors backend/darwin/preflight.go's own
-// session gate).
-func shouldForwardToBridge(seq *ir.Sequence) bool {
-	return darwin.IsRemoteSession() && darwin.RequiresSession(seq)
+// 260908-feat-remote-ssh Phase 2): every ssh-started run goes to
+// `gotto-hando --bridge`. Query-only runs must take this path too: qinfo,
+// qdisp and qmouse describe the desktop that later GUI operations use, not
+// the ssh-side process. Session exemptions remain a Preflight policy only;
+// they must not decide transport routing.
+func shouldForwardToBridge(_ *ir.Sequence) bool {
+	return darwin.IsRemoteSession()
 }
 
 // dialBridge is a seam over darwin.DialBridge so tests can substitute a

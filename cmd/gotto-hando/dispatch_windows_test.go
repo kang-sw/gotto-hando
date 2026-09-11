@@ -138,6 +138,30 @@ func TestForwardToBridgeJSONLRelaysVerbatim(t *testing.T) {
 	}
 }
 
+// TestRemoteQueryOnlyRunUsesBridgeContext guards the diagnostic routing
+// contract: qinfo/qdisp/qmouse from ssh must describe the GUI bridge, not the
+// ssh-side Session 0 process. These ops remain exempt from the bridge backend's
+// own session preflight; that exemption must not bypass the bridge transport.
+func TestRemoteQueryOnlyRunUsesBridgeContext(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "10.0.0.1 22 10.0.0.2 22")
+	t.Setenv("SSH_TTY", "")
+	be := &dryrun.Backend{}
+	withBridgeSession(t, be)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"local", "--jsonl", "qinfo", "qdisp", "qmouse"},
+		strings.NewReader(""), &stdout, &stderr)
+	if code != output.ExitOK {
+		t.Fatalf("exit = %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+	calls := strings.Join(be.Calls, "\n")
+	for _, want := range []string{"Preflight", "Info", "MousePos"} {
+		if !strings.Contains(calls, want) {
+			t.Errorf("bridge calls = %v, want %s", be.Calls, want)
+		}
+	}
+}
+
 func TestForwardToBridgePostStartDisconnectWritesUnknownDoneOnce(t *testing.T) {
 	be := &dryrun.Backend{Clipboard: "lost-terminal-done"}
 	withBridgeDisconnectBeforeDone(t, be)

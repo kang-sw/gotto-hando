@@ -144,14 +144,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	if opts.Dest == "local" {
-		// Windows-only routing (260908-feat-remote-ssh Phase 0): an
-		// ssh-started (or otherwise non-console) session forwards
-		// non-exempt runs to `gotto-hando --bridge` instead of touching
-		// the real local backend at all - shouldForwardToBridge is false
-		// on every other GOOS, so this branch is a no-op there
-		// (help-remote.txt SESSION BRIDGE "Detection"). forwardToBridge
-		// prints its own start object; it is unaffected by, and untouched
-		// by, this ticket's dest!="local" ssh transport.
+		// On macOS and Windows, an ssh-started (or otherwise non-console)
+		// session forwards every run to `gotto-hando --bridge` instead of
+		// touching the ssh-side backend. This includes query-only diagnostics,
+		// which must describe the same GUI session later operations will use.
+		// shouldForwardToBridge is false on every other GOOS, so this branch is
+		// a no-op there (help-remote.txt SESSION BRIDGE "Detection").
+		// forwardToBridge prints its own start object; it is unaffected by the
+		// dest!="local" ssh transport.
 		if shouldForwardToBridge(seq) {
 			return forwardToBridge(opts, seq, stdout, stderr, abort)
 		}
