@@ -10,7 +10,7 @@ session bridge for ssh, displays.
 
 == CHECK ==
   $ gotto-hando local qinfo
-  os=darwin osver=14.5 arch=arm64 ver=0.1.0 primary=cmd desktop=0,0 2560x1440
+  os=darwin osver=14.5 arch=arm64 ver=1.2.3 primary=cmd desktop=0,0 2560x1440
   displays=2 session=active perms=accessibility:ok,screen:ok
   (one line in reality; wrapped here)
   perms=accessibility:*  gates input (k kd ku txt m c md mu drag scroll
@@ -26,10 +26,14 @@ session bridge for ssh, displays.
                          unlocked. bridge = this process was started by ssh
                          and the answer came through the GUI session's
                          `gotto-hando --bridge`: runs work. locked = lock
-                         screen / screen saver. inactive = not a GUI
-                         session (ssh) and no bridge running: nothing can
-                         run (E_SESSION).
-  qinfo never prompts. Preflight checks only what the run contains and the
+                         screen / screen saver. inactive = an answering
+                         GUI/backend diagnostic reports that its session
+                         became unusable, e.g. after fast user switching.
+                         An ssh-started query-only run without a reachable
+                         bridge aborts E_SESSION, exit 4.
+  qinfo never prompts. Diagnostic ops are exempt from this process's backend
+  preflight session checks, but an ssh-started diagnostic still requires a
+  reachable bridge. Preflight checks only what the run contains and the
   held-key guard protects input injection, so a run of only qinfo qdisp
   qmouse sleep set and comments never fails on the held-key, session or
   permission checks (it reports session and perms); every other command
@@ -211,9 +215,11 @@ session bridge for ssh, displays.
   session=locked    lock screen or screen saver is up. Input and capture
                     fail in preflight (exit 4). Unlock; prevent with
                     caffeinate.
-  session=inactive  the process is not in the GUI session (ssh) and no
-                    bridge is running. Start `gotto-hando --bridge` in the
-                    GUI session (above).
+  session=inactive  an answering GUI/backend diagnostic can report that its
+                    session became unusable, for example after fast user
+                    switching. An ssh-started query-only run without a
+                    reachable bridge aborts E_SESSION, exit 4; start
+                    `gotto-hando --bridge`.
   Secure Input      while a password field (or an app that enables Secure
                     Event Input) is focused, synthetic key events are
                     blocked. The failing line reports E_INPUT with a hint.

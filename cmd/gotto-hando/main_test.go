@@ -337,8 +337,9 @@ func TestVersion(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 (stderr=%q)", code, errOut)
 	}
-	if out != "0.1.0\n" {
-		t.Fatalf("stdout = %q, want %q", out, "0.1.0\n")
+	wantVersion := assets.Version()
+	if out != wantVersion+"\n" {
+		t.Fatalf("stdout = %q, want %q", out, wantVersion+"\n")
 	}
 }
 
@@ -352,7 +353,7 @@ func TestExpectVersionMismatch(t *testing.T) {
 	if out != "" {
 		t.Fatalf("stdout = %q, want empty", out)
 	}
-	want := "version mismatch: remote 0.1.0, expected 9.9.9\n"
+	want := "version mismatch: remote " + assets.Version() + ", expected 9.9.9\n"
 	if errOut != want {
 		t.Fatalf("stderr = %q, want %q", errOut, want)
 	}
@@ -365,7 +366,7 @@ func TestExpectVersionMismatch(t *testing.T) {
 // turned a bare/absent dest into a real ssh spawn, which would make this
 // test flaky/environment-dependent).
 func TestExpectVersionMatch(t *testing.T) {
-	out, errOut, code := runBin(t, "", "--expect-version", "0.1.0", "local")
+	out, errOut, code := runBin(t, "", "--expect-version", assets.Version(), "local")
 	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		if code != 2 {
 			t.Fatalf("exit = %d, want 2 (stderr=%q)", code, errOut)

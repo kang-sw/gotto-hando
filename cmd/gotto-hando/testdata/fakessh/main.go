@@ -59,7 +59,7 @@ func run(args []string) int {
 		// mid-run (ERROR POLICY "Connection loss"), AFTER the wrapper has
 		// already committed to printing its own start object.
 		fmt.Print(`{"event":"start","out":"/remote/out/","dest":"local","target":{"os":"darwin"}}` + "\n")
-		fmt.Print(`{"line":1,"status":"ok","cmd":"qinfo","os":"darwin","osver":"","arch":"","ver":"0.1.0","primary":"0","desktop_x":0,"desktop_y":0,"desktop_w":0,"desktop_h":0,"displays":0,"session":"local","perms":"n/a","t_ms":1}` + "\n")
+		fmt.Print(`{"line":1,"status":"ok","cmd":"qinfo","os":"darwin","osver":"","arch":"","ver":"1.2.3","primary":"0","desktop_x":0,"desktop_y":0,"desktop_w":0,"desktop_h":0,"displays":0,"session":"local","perms":"n/a","t_ms":1}` + "\n")
 		return 1
 
 	case "killbeforeresult":
@@ -101,7 +101,7 @@ func run(args []string) int {
 		// where target.os would otherwise coincidentally match by
 		// accident.
 		fmt.Print(`{"event":"start","out":"/remote/out/","dest":"local","target":{"os":"windows"}}` + "\n")
-		fmt.Print(`{"line":1,"status":"ok","cmd":"qinfo","os":"windows","osver":"","arch":"","ver":"0.1.0","primary":"ctrl","desktop_x":0,"desktop_y":0,"desktop_w":0,"desktop_h":0,"displays":0,"session":"bridge","perms":"n/a","t_ms":1}` + "\n")
+		fmt.Print(`{"line":1,"status":"ok","cmd":"qinfo","os":"windows","osver":"","arch":"","ver":"1.2.3","primary":"ctrl","desktop_x":0,"desktop_y":0,"desktop_w":0,"desktop_h":0,"displays":0,"session":"bridge","perms":"n/a","t_ms":1}` + "\n")
 		fmt.Print(`{"event":"done","ok":1,"err":0,"skip":0,"elapsed_ms":2,"held_released":0}` + "\n")
 		return 0
 

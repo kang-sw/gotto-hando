@@ -28,7 +28,7 @@ import (
 // (index, scale, the trailing "primary" flag) is exercised both ways.
 func synthQueryInfo() backend.Info {
 	return backend.Info{
-		OS: "darwin", OSVer: "14.5", Arch: "arm64", Ver: "0.1.0",
+		OS: "darwin", OSVer: "14.5", Arch: "arm64", Ver: "1.2.3",
 		Primary:  "cmd",
 		DesktopX: 0, DesktopY: 0, DesktopW: 2560, DesktopH: 1440,
 		Displays: 2,
@@ -53,7 +53,7 @@ func TestQueryInfoFormat(t *testing.T) {
 	}
 	r := sum.Results[0]
 
-	wantDetail := "os=darwin osver=14.5 arch=arm64 ver=0.1.0 primary=cmd desktop=0,0 2560x1440 displays=2 session=active perms=accessibility:ok,screen:ok"
+	wantDetail := "os=darwin osver=14.5 arch=arm64 ver=1.2.3 primary=cmd desktop=0,0 2560x1440 displays=2 session=active perms=accessibility:ok,screen:ok"
 	if r.Detail != wantDetail {
 		t.Errorf("Detail = %q, want %q", r.Detail, wantDetail)
 	}
@@ -63,7 +63,7 @@ func TestQueryInfoFormat(t *testing.T) {
 
 	wantJSON := []output.KV{
 		{Key: "os", Val: "darwin"}, {Key: "osver", Val: "14.5"},
-		{Key: "arch", Val: "arm64"}, {Key: "ver", Val: "0.1.0"},
+		{Key: "arch", Val: "arm64"}, {Key: "ver", Val: "1.2.3"},
 		{Key: "primary", Val: "cmd"},
 		{Key: "desktop_x", Val: 0}, {Key: "desktop_y", Val: 0},
 		{Key: "desktop_w", Val: 2560}, {Key: "desktop_h", Val: 1440},

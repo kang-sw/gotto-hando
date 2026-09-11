@@ -15,6 +15,8 @@ Public target: GitHub Releases in `kang-sw/gotto-hando`.
   truth used by `assets.Version()` and `gotto-hando --version`. Commit any version
   change before tagging. Release tooling must reject a requested version that
   differs from this source.
+- Routine version bumps should edit only that one line in `assets/help.txt`;
+  tests and user-facing examples must derive or use version-independent values.
 - Transitioning to 1.0 requires a separate policy decision.
 
 ## Pre-flight

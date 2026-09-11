@@ -211,13 +211,13 @@ The installers place a single native binary in the current user's
 macOS:
 
 ```sh
-curl -fsSL https://github.com/kang-sw/gotto-hando/releases/download/v0.1.0/install.sh | bash -s -- 0.1.0
+curl -fsSL https://github.com/kang-sw/gotto-hando/releases/latest/download/install.sh | bash
 ```
 
 Windows PowerShell:
 
 ```powershell
-& ([scriptblock]::Create((irm https://github.com/kang-sw/gotto-hando/releases/download/v0.1.0/install.ps1))) 0.1.0
+& ([scriptblock]::Create((irm https://github.com/kang-sw/gotto-hando/releases/latest/download/install.ps1)))
 ```
 
 The macOS installer writes `~/.local/bin/gotto-hando`; Windows writes
@@ -226,7 +226,7 @@ settings unchanged. If needed, add `.local/bin` to PATH, then start the GUI
 bridge manually with `gotto-hando --bridge`.
 
 Release artifacts are available for macOS arm64/amd64 and Windows amd64. See
-the [v0.1.0 release](https://github.com/kang-sw/gotto-hando/releases/tag/v0.1.0)
+the [latest release](https://github.com/kang-sw/gotto-hando/releases/latest)
 for binaries, installers, and `SHA256SUMS`.
 
 ## Remote desktops

@@ -9,7 +9,7 @@ gotto-hando --help-windows - Windows: interactive session, session bridge
 
 == CHECK ==
   $ gotto-hando local qinfo
-  os=windows osver=10.0.22631 arch=amd64 ver=0.1.0 primary=ctrl
+  os=windows osver=10.0.22631 arch=amd64 ver=1.2.3 primary=ctrl
   desktop=0,0 2560x1440 displays=1 session=active perms=n/a elevated=0
   (one line in reality; wrapped here)
   session=active    this process is in the active console session and the
@@ -19,10 +19,11 @@ gotto-hando --help-windows - Windows: interactive session, session bridge
                     logged-on session's `gotto-hando --bridge`: runs work.
   session=locked    the input desktop is Winlogon: lock screen, UAC secure
                     desktop, Ctrl+Alt+Del screen. Unlock / dismiss.
-  session=inactive  not the active console session (a service / session 0,
-                    an ssh shell, a disconnected RDP session, another
-                    user's session) AND no bridge is running: nothing can
-                    run (E_SESSION).
+  session=inactive  an answering GUI/backend diagnostic can report that its
+                    session became unusable, for example after a disconnected
+                    RDP or non-active GUI session. An ssh-started query-only
+                    run without a reachable bridge aborts E_SESSION, exit 4;
+                    start `gotto-hando --bridge`.
   perms=n/a         Windows has no permission dialogs for input/capture.
                     Nothing to grant. `--request-perms` is exit 2 on
                     Windows, locally (usage error) and through a <dest>

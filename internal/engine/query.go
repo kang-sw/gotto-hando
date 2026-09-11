@@ -11,7 +11,7 @@ import (
 // formatQueryInfo builds qinfo's plain Detail line (help.txt:431-434,
 // help-macos.txt CHECK example :12-14):
 //
-//	os=darwin osver=14.5 arch=arm64 ver=0.1.0 primary=cmd desktop=0,0
+//	os=darwin osver=14.5 arch=arm64 ver=1.2.3 primary=cmd desktop=0,0
 //	2560x1440 displays=2 session=active perms=accessibility:ok,screen:ok
 func formatQueryInfo(info backend.Info) string {
 	return fmt.Sprintf("os=%s osver=%s arch=%s ver=%s primary=%s desktop=%d,%d %dx%d displays=%d session=%s perms=%s",

@@ -11,7 +11,7 @@ import (
 // [--timeout D] [-k] [--cap-on-error] [--request-perms] -f -
 func TestBuildForwardArgsFixedOrder(t *testing.T) {
 	got := BuildForwardArgs(ForwardOptions{
-		LocalVersion: "0.1.0",
+		LocalVersion: "1.2.3",
 		Quiet:        true,
 		Delay:        "10ms",
 		Timeout:      "5s",
@@ -20,7 +20,7 @@ func TestBuildForwardArgsFixedOrder(t *testing.T) {
 		RequestPerms: true,
 	})
 	want := []string{
-		"local", "--jsonl", "--inline-captures", "--expect-version", "0.1.0",
+		"local", "--jsonl", "--inline-captures", "--expect-version", "1.2.3",
 		"-q", "--delay", "10ms", "--timeout", "5s", "-k", "--cap-on-error",
 		"--request-perms", "-f", "-",
 	}
@@ -32,9 +32,9 @@ func TestBuildForwardArgsFixedOrder(t *testing.T) {
 // TestBuildForwardArgsMinimal asserts every optional flag is omitted when
 // unset, leaving only the mandatory prefix and trailing -f -.
 func TestBuildForwardArgsMinimal(t *testing.T) {
-	got := BuildForwardArgs(ForwardOptions{LocalVersion: "0.1.0"})
+	got := BuildForwardArgs(ForwardOptions{LocalVersion: "1.2.3"})
 	want := []string{
-		"local", "--jsonl", "--inline-captures", "--expect-version", "0.1.0",
+		"local", "--jsonl", "--inline-captures", "--expect-version", "1.2.3",
 		"-f", "-",
 	}
 	if !reflect.DeepEqual(got, want) {

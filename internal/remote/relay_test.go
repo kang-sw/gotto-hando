@@ -91,7 +91,7 @@ func TestRelayProcessQClipWriteBack(t *testing.T) {
 func TestRelayProcessPassthroughLine(t *testing.T) {
 	seq := parseInlined(t, []string{"qinfo"})
 	rl := &Relay{LocalSeq: seq}
-	wire := `{"line":1,"status":"ok","cmd":"qinfo","os":"darwin","osver":"14.0","arch":"arm64","ver":"0.1.0","primary":"cmd","desktop_x":0,"desktop_y":0,"desktop_w":1920,"desktop_h":1080,"displays":1,"session":"bridge","perms":"accessibility:ok,screen:ok","t_ms":4}`
+	wire := `{"line":1,"status":"ok","cmd":"qinfo","os":"darwin","osver":"14.0","arch":"arm64","ver":"1.2.3","primary":"cmd","desktop_x":0,"desktop_y":0,"desktop_w":1920,"desktop_h":1080,"displays":1,"session":"bridge","perms":"accessibility:ok,screen:ok","t_ms":4}`
 	res, rawForJSONL, err := rl.Process([]byte(wire))
 	if err != nil {
 		t.Fatalf("Process error: %v", err)
