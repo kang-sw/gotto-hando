@@ -126,6 +126,10 @@ gotto-hando winbox \
   'cap[w,label=script-finished]'
 ```
 
+Here `sleep[]2s` guarantees only that the capture will not begin before two
+seconds have elapsed. Application work, capture, encoding, and transport add
+their own time, so the capture result is not promised to arrive at two seconds.
+
 The file should contain the single line the console will execute. For a
 multi-line Python script, that can be an `exec(compile(...))` wrapper with the
 script encoded inside it. `[f]` paths are read on the machine invoking

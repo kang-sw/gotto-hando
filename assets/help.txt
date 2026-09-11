@@ -428,7 +428,10 @@ grep for it.
 
   FLOW
   sleep                                           DUR
-      Wait (<= 60s). No default delay.
+      Wait at least DUR before the next line may begin (<= 60s). OS
+      scheduling may make the wait longer, and the following command adds
+      its own execution time; `sleep[]3s cap` therefore does not promise
+      that the capture result returns at 3s. No default delay.
   set [delay=DUR, txtms=DUR, keyms=DUR]
       Change defaults for the following lines. delay = pause after every
       command except query/sleep/set/cap/exec/open (initial 100ms);
