@@ -17,13 +17,15 @@ cleanup() {
 trap 'echo "installer fixture failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 trap cleanup EXIT
 case "$(uname -m)" in arm64) ASSET=gotto-hando-darwin-arm64;; x86_64) ASSET=gotto-hando-darwin-amd64;; *) exit 2;; esac
+OLD_VERSION=1.2.2
+NEW_VERSION=1.2.3
 RELEASES="$ROOT/github/kang-sw/gotto-hando/releases/download"
 API="$ROOT/api/repos/kang-sw/gotto-hando/releases"
-mkdir -p "$RELEASES/v0.1.0" "$RELEASES/v0.1.1" "$API" "$ROOT/shims"
-printf 'test binary 0.1.0\n' > "$RELEASES/v0.1.0/$ASSET"
-printf 'test binary 0.1.1\n' > "$RELEASES/v0.1.1/$ASSET"
-for version in 0.1.0 0.1.1; do (cd "$RELEASES/v$version" && shasum -a 256 "$ASSET" > SHA256SUMS); done
-printf '{"tag_name":"v0.1.1"}\n' > "$API/latest"
+mkdir -p "$RELEASES/v$OLD_VERSION" "$RELEASES/v$NEW_VERSION" "$API" "$ROOT/shims"
+printf 'test binary %s\n' "$OLD_VERSION" > "$RELEASES/v$OLD_VERSION/$ASSET"
+printf 'test binary %s\n' "$NEW_VERSION" > "$RELEASES/v$NEW_VERSION/$ASSET"
+for version in "$OLD_VERSION" "$NEW_VERSION"; do (cd "$RELEASES/v$version" && shasum -a 256 "$ASSET" > SHA256SUMS); done
+printf '{"tag_name":"v%s"}\n' "$NEW_VERSION" > "$API/latest"
 python3 "$SCRIPT_DIR/testdata/install_server.py" "$ROOT" "$ROOT/port" >"$ROOT/server.log" 2>&1 &
 SERVER=$!
 for _ in $(seq 1 100); do [[ -s "$ROOT/port" ]] && break; kill -0 "$SERVER"; sleep 0.1; done
@@ -62,28 +64,28 @@ TARGET="$INSTALL_DIR/gotto-hando"
 run_install() { "$SCRIPT_DIR/install.sh" "$@" >"$ROOT/output" 2>&1 || return $?; [[ "$PATH" == "$PATH_BEFORE" ]]; }
 check_target() { cmp "$1" "$TARGET"; [[ -x "$TARGET" ]]; [[ "$(stat -f '%Lp' "$TARGET")" == 755 ]]; }
 expect_failure() {
-  if run_install 0.1.1; then echo "unexpected installation success" >&2; exit 1; fi
+  if run_install "$NEW_VERSION"; then echo "unexpected installation success" >&2; exit 1; fi
   check_target "$ROOT/old"
   [[ "$PATH" == "$PATH_BEFORE" ]]
   [[ -z "$(find "$INSTALL_DIR" -name '.gotto-hando.*' -print)" ]]
 }
-run_install v0.1.0
-check_target "$RELEASES/v0.1.0/$ASSET"
+run_install "v$OLD_VERSION"
+check_target "$RELEASES/v$OLD_VERSION/$ASSET"
 [[ -s "$GOTTO_TEST_STAGE_CHECK" ]]
 grep -F 'PATH unchanged' "$ROOT/output" >/dev/null
 grep -F "$(printf 'export PATH=%q:' "$INSTALL_DIR")" "$ROOT/output" >/dev/null
-run_install 0.1.1
-check_target "$RELEASES/v0.1.1/$ASSET"
+run_install "$NEW_VERSION"
+check_target "$RELEASES/v$NEW_VERSION/$ASSET"
 cp "$TARGET" "$ROOT/old"
 for mode in default latest; do
   : > "$GOTTO_TEST_REQUESTS"
   if [[ "$mode" == default ]]; then run_install; else run_install latest; fi
   [[ "$(grep -c '/releases/latest$' "$GOTTO_TEST_REQUESTS")" == 1 ]]
-  [[ "$(grep -c "/releases/download/v0.1.1/$ASSET$" "$GOTTO_TEST_REQUESTS")" == 1 ]]
-  [[ "$(grep -c '/releases/download/v0.1.1/SHA256SUMS$' "$GOTTO_TEST_REQUESTS")" == 1 ]]
+  [[ "$(grep -c "/releases/download/v$NEW_VERSION/$ASSET$" "$GOTTO_TEST_REQUESTS")" == 1 ]]
+  [[ "$(grep -c "/releases/download/v$NEW_VERSION/SHA256SUMS$" "$GOTTO_TEST_REQUESTS")" == 1 ]]
   check_target "$ROOT/old"
 done
-CURRENT="$RELEASES/v0.1.1"
+CURRENT="$RELEASES/v$NEW_VERSION"
 cp "$CURRENT/SHA256SUMS" "$ROOT/manifest"
 printf 'tampered\n' > "$CURRENT/$ASSET"; expect_failure; cp "$ROOT/old" "$CURRENT/$ASSET"
 cat "$ROOT/manifest" "$ROOT/manifest" > "$CURRENT/SHA256SUMS"; expect_failure
@@ -92,7 +94,7 @@ rm "$CURRENT/SHA256SUMS"; expect_failure; cp "$ROOT/manifest" "$CURRENT/SHA256SU
 mv "$CURRENT/$ASSET" "$ROOT/asset"; expect_failure; mv "$ROOT/asset" "$CURRENT/$ASSET"
 printf '%s' "$ASSET" > "$ROOT/truncate"; expect_failure; rm "$ROOT/truncate"
 rm "$TARGET"; mkdir "$TARGET"; printf 'keep' > "$TARGET/sentinel"
-if run_install 0.1.1; then echo 'target directory was accepted' >&2; exit 1; fi
+if run_install "$NEW_VERSION"; then echo 'target directory was accepted' >&2; exit 1; fi
 [[ "$(cat "$TARGET/sentinel")" == keep ]]
 [[ "$(find "$TARGET" -type f | wc -l | tr -d ' ')" == 1 ]]
 echo 'macOS installer fixtures passed: install/update/latest/checksum/duplicate/missing/interrupted/directory/PATH/mode'

@@ -10,6 +10,10 @@ $oldBase = $env:GOTTO_HANDO_BASE_URL
 $root = Join-Path ([IO.Path]::GetTempPath()) ('gotto-hando-test-' + [guid]::NewGuid())
 $installDir = Join-Path $root "install dir's\.local\bin"
 $asset = 'gotto-hando-windows-amd64.exe'
+$oldVersion = '1.2.2'
+$newVersion = '1.2.3'
+$binaryFullPath = (Resolve-Path -LiteralPath $BinaryPath).Path
+$runtimeVersion = (& $binaryFullPath --version).Trim()
 $releases = Join-Path $root 'github\kang-sw\gotto-hando\releases\download'
 $api = Join-Path $root 'api\repos\kang-sw\gotto-hando\releases'
 $installer = Join-Path $PSScriptRoot 'install.ps1'
@@ -42,25 +46,25 @@ function Assert-Preserved {
 }
 function Expect-Failure {
   $failed = $false
-  try { Install '0.1.1' | Out-Null } catch { $failed = $true }
+  try { Install $newVersion | Out-Null } catch { $failed = $true }
   Assert-True $failed 'unexpected installation success'
   Assert-Preserved
 }
 try {
-  foreach ($version in @('0.1.0', '0.1.1')) {
+  foreach ($version in @($oldVersion, $newVersion)) {
     $dir = Join-Path $releases "v$version"
     New-Item -ItemType Directory -Force $dir | Out-Null
     Copy-Item -LiteralPath $BinaryPath -Destination (Join-Path $dir $asset)
   }
-  $current = Join-Path $releases 'v0.1.1'
+  $current = Join-Path $releases "v$newVersion"
   Copy-Item -LiteralPath $UpdateBinaryPath -Destination (Join-Path $current $asset) -Force
   Assert-True ((Hash $BinaryPath) -ne (Hash $UpdateBinaryPath)) 'update fixture must have distinct executable bytes'
-  foreach ($version in @('0.1.0', '0.1.1')) {
+  foreach ($version in @($oldVersion, $newVersion)) {
     $dir = Join-Path $releases "v$version"
     ((Hash (Join-Path $dir $asset)) + "  $asset") | Set-Content (Join-Path $dir 'SHA256SUMS')
   }
   New-Item -ItemType Directory -Force $api | Out-Null
-  '{"tag_name":"v0.1.1"}' | Set-Content (Join-Path $api 'latest')
+  ('{"tag_name":"v' + $newVersion + '"}') | Set-Content (Join-Path $api 'latest')
   $portFile = Join-Path $root 'port'
   $serverScript = Join-Path $PSScriptRoot 'testdata\install_server.py'
   $server = Start-Process $PythonPath -ArgumentList "`"$serverScript`" `"$root`" `"$portFile`"" -PassThru -RedirectStandardOutput (Join-Path $root 'server.log') -RedirectStandardError (Join-Path $root 'server-error.log')
@@ -73,21 +77,21 @@ try {
   $origin = 'http://127.0.0.1:' + (Get-Content $portFile)
   $env:GOTTO_HANDO_INSTALL_DIR = $installDir
   Remove-Item Env:GOTTO_HANDO_BASE_URL -ErrorAction SilentlyContinue
-  $output = Install 'v0.1.0'
+  $output = Install "v$oldVersion"
   $target = Join-Path $installDir 'gotto-hando.exe'
-  Assert-True ((Hash $target) -eq (Hash (Join-Path $releases "v0.1.0\$asset"))) 'fresh installation bytes mismatch'
-  Assert-True ((& $target --version) -eq '0.1.0') 'fresh executable cannot run'
+  Assert-True ((Hash $target) -eq (Hash (Join-Path $releases "v$oldVersion\$asset"))) 'fresh installation bytes mismatch'
+  Assert-True ((& $target --version).Trim() -eq $runtimeVersion) 'fresh executable cannot run'
   Assert-True ($output.Contains('PATH unchanged')) 'PATH warning missing'
   Assert-True ($output.Contains($installDir.Replace("'", "''") + ";'")) 'PATH guidance does not quote actual destination'
-  Install '0.1.1' | Out-Null
+  Install $newVersion | Out-Null
   $oldHash = Hash $target
   Assert-True ($oldHash -eq (Hash (Join-Path $current $asset))) 'successful update bytes mismatch'
   foreach ($mode in @('', 'latest')) {
     $requests.Clear()
     Install $mode | Out-Null
     Assert-True (@($requests | Where-Object { $_ -eq 'https://api.github.com/repos/kang-sw/gotto-hando/releases/latest' }).Count -eq 1) 'latest did not resolve exactly once'
-    Assert-True (@($requests | Where-Object { $_ -eq "https://github.com/kang-sw/gotto-hando/releases/download/v0.1.1/$asset" }).Count -eq 1) 'binary URL not pinned to resolved version'
-    Assert-True (@($requests | Where-Object { $_ -eq 'https://github.com/kang-sw/gotto-hando/releases/download/v0.1.1/SHA256SUMS' }).Count -eq 1) 'manifest URL not pinned to resolved version'
+    Assert-True (@($requests | Where-Object { $_ -eq "https://github.com/kang-sw/gotto-hando/releases/download/v$newVersion/$asset" }).Count -eq 1) 'binary URL not pinned to resolved version'
+    Assert-True (@($requests | Where-Object { $_ -eq "https://github.com/kang-sw/gotto-hando/releases/download/v$newVersion/SHA256SUMS" }).Count -eq 1) 'manifest URL not pinned to resolved version'
     Assert-Preserved
   }
   $oldBytes = [IO.File]::ReadAllBytes((Join-Path $current $asset))
@@ -107,16 +111,16 @@ try {
   Start-Sleep -Milliseconds 500
   Assert-True (-not $lockedProcess.HasExited) 'running fixture exited too early'
   $replaced = $true
-  try { Install '0.1.0' | Out-Null } catch { $replaced = $false }
+  try { Install $oldVersion | Out-Null } catch { $replaced = $false }
   Assert-True (-not $lockedProcess.HasExited) 'installer killed the running fixture'
   if ($replaced) {
     Assert-True ((Hash $target) -eq (Hash $BinaryPath)) 'atomic replacement bytes mismatch'
-    Assert-True ((& $target --version) -eq '0.1.0') 'replacement executable cannot run'
+    Assert-True ((& $target --version).Trim() -eq $runtimeVersion) 'replacement executable cannot run'
   } else { Assert-Preserved }
   Stop-Process -Id $lockedProcess.Id -Force
   $lockedProcess.WaitForExit()
   $lockedProcess = $null
-  Install '0.1.1' | Out-Null
+  Install $newVersion | Out-Null
   Assert-Preserved
 
   # A separate owned process holds a true exclusive lock that denies replacement.
@@ -135,7 +139,7 @@ try { [IO.File]::WriteAllText('__READY__', 'ready'); Start-Sleep -Seconds 60 } f
   }
   Assert-True (Test-Path $ready) 'exclusive-lock holder not ready'
   $failed = $false
-  try { Install '0.1.1' | Out-Null } catch { $failed = $true }
+  try { Install $newVersion | Out-Null } catch { $failed = $true }
   Assert-True $failed 'exclusively locked replacement was accepted'
   Assert-True (-not $lockedProcess.HasExited) 'installer killed the lock holder'
   Stop-Process -Id $lockedProcess.Id -Force
@@ -145,7 +149,7 @@ try { [IO.File]::WriteAllText('__READY__', 'ready'); Start-Sleep -Seconds 60 } f
   Remove-Item $target
   New-Item -ItemType Directory $target | Out-Null
   'keep' | Set-Content (Join-Path $target 'sentinel')
-  $failed = $false; try { Install '0.1.1' | Out-Null } catch { $failed = $true }
+  $failed = $false; try { Install $newVersion | Out-Null } catch { $failed = $true }
   Assert-True $failed 'target directory was accepted'
   Assert-True ((Get-Content (Join-Path $target 'sentinel')) -eq 'keep') 'target directory contents changed'
   Write-Host 'Windows installer fixtures passed: install/update/latest/checksum/duplicate/missing/interrupted/locked/directory/PATH'
